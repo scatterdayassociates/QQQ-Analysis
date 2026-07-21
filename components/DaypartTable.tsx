@@ -9,10 +9,16 @@ function formatVolume(v: number | null): string {
   return String(v);
 }
 
-export default function DaypartTable({ buckets }: { buckets: DaypartBucket[] }) {
+interface DaypartTableProps {
+  buckets: DaypartBucket[];
+  hoveredIndex: number | null;
+  onHover: (index: number | null) => void;
+}
+
+export default function DaypartTable({ buckets, hoveredIndex, onHover }: DaypartTableProps) {
   return (
-    <div className="daypart-table-wrap">
-      <table className="daypart-table">
+    <div className="table-wrap">
+      <table className="mono">
         <thead>
           <tr>
             <th>Time (ET)</th>
@@ -22,8 +28,13 @@ export default function DaypartTable({ buckets }: { buckets: DaypartBucket[] }) 
           </tr>
         </thead>
         <tbody>
-          {buckets.map((b) => (
-            <tr key={b.time}>
+          {buckets.map((b, i) => (
+            <tr
+              key={b.time}
+              className={hoveredIndex === i ? "active" : undefined}
+              onMouseEnter={() => onHover(i)}
+              onMouseLeave={() => onHover(null)}
+            >
               <td>{b.time}</td>
               <td>{formatVolume(b.qqqVolume)}</td>
               <td>{formatVolume(b.tqqqVolume)}</td>

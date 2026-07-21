@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DaypartData } from "@/lib/massive";
 import DaypartChart from "./DaypartChart";
 import DaypartTable from "./DaypartTable";
@@ -28,6 +28,13 @@ function defaultEtDate(): string {
   return formatter.format(new Date());
 }
 
+function formatVolume(v: number | null): string {
+  if (v === null) return "—";
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
+  return String(v);
+}
+
 const TIME_OPTIONS = generateTimeOptions(MARKET_OPEN, MARKET_CLOSE, 15);
 const TODAY = defaultEtDate();
 
@@ -38,6 +45,7 @@ export default function DaypartPanel() {
   const [data, setData] = useState<DaypartData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,6 +56,7 @@ export default function DaypartPanel() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load daypart data");
       setData(json as DaypartData);
+      setHoveredIndex(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load daypart data");
       setData(null);
@@ -63,74 +72,114 @@ export default function DaypartPanel() {
   const startOptions = TIME_OPTIONS.filter((t) => t < endTime);
   const endOptions = TIME_OPTIONS.filter((t) => t > startTime);
 
+  const buckets = data?.buckets ?? [];
+  const displayedIndex = hoveredIndex ?? (buckets.length > 0 ? buckets.length - 1 : null);
+  const displayedBucket = displayedIndex !== null ? buckets[displayedIndex] : null;
+
+  const lastUpdatedLabel = useMemo(() => {
+    if (!data) return loading ? "Loading…" : "";
+    return `${data.date} · ${data.startTime}–${data.endTime} ET`;
+  }, [data, loading]);
+
   return (
-    <section className="daypart-panel">
-      <div className="daypart-header">
-        <h2>Intraday Daypart — Volume &amp; VIX (IV proxy)</h2>
-        <div className="daypart-filters">
-          <label>
-            Date
-            <input type="date" value={date} max={TODAY} onChange={(e) => setDate(e.target.value)} />
-          </label>
-          <label>
-            From
-            <select value={startTime} onChange={(e) => setStartTime(e.target.value)}>
-              {startOptions.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            To
-            <select value={endTime} onChange={(e) => setEndTime(e.target.value)}>
-              {endOptions.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="refresh-btn" onClick={load} disabled={loading}>
-            {loading ? "Loading..." : "Apply"}
-          </button>
+    <section>
+      <div className="toolbar">
+        <div className="field">
+          <label htmlFor="date-input">Date</label>
+          <input
+            id="date-input"
+            type="date"
+            className="mono"
+            value={date}
+            max={TODAY}
+            onChange={(e) => setDate(e.target.value)}
+          />
         </div>
+        <div className="field">
+          <label htmlFor="from-input">From</label>
+          <select id="from-input" value={startTime} onChange={(e) => setStartTime(e.target.value)}>
+            {startOptions.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="to-input">To</label>
+          <select id="to-input" value={endTime} onChange={(e) => setEndTime(e.target.value)}>
+            {endOptions.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="toolbar-spacer" />
+        <span className="last-updated mono">{lastUpdatedLabel}</span>
+        <button className="apply" onClick={load} disabled={loading}>
+          {loading ? "Loading…" : "Apply"}
+        </button>
       </div>
 
-      <div className="daypart-legend">
-        <span>
-          <i className="dot dot-qqq" /> QQQ Volume
+      <div className="legend">
+        <span className="swatch">
+          <i className="dot" style={{ background: "var(--accent-qqq)" }} />
+          QQQ Volume
         </span>
-        <span>
-          <i className="dot dot-tqqq" /> TQQQ Volume
+        <span className="swatch">
+          <i className="dot" style={{ background: "var(--accent-tqqq)" }} />
+          TQQQ Volume
         </span>
-        <span>
-          <i className="dot dot-vix" /> VIX (IV proxy)
+        <span className="swatch">
+          <i className="dot line" style={{ background: "var(--accent-vix)" }} />
+          VIX (IV proxy)
         </span>
       </div>
 
       {error && <div className="error-box">{error}</div>}
 
-      {data && data.buckets.length > 0 && !error && (
+      {!error && buckets.length > 0 && (
         <>
-          <DaypartChart buckets={data.buckets} />
-          <DaypartTable buckets={data.buckets} />
+          <div className="card">
+            <div className="readout">
+              <div className="stat">
+                <span className="k">Time (ET)</span>
+                <span className="v mono">{displayedBucket ? `${displayedBucket.time} ET` : "—"}</span>
+              </div>
+              <div className="stat">
+                <span className="k">QQQ Volume</span>
+                <span className="v qqq mono">{formatVolume(displayedBucket?.qqqVolume ?? null)}</span>
+              </div>
+              <div className="stat">
+                <span className="k">TQQQ Volume</span>
+                <span className="v tqqq mono">{formatVolume(displayedBucket?.tqqqVolume ?? null)}</span>
+              </div>
+              <div className="stat">
+                <span className="k">VIX</span>
+                <span className="v vix mono">
+                  {displayedBucket?.vix !== null && displayedBucket?.vix !== undefined
+                    ? displayedBucket.vix.toFixed(2)
+                    : "—"}
+                </span>
+              </div>
+            </div>
+            <div className="chart-wrap">
+              <DaypartChart buckets={buckets} hoveredIndex={hoveredIndex} onHover={setHoveredIndex} />
+            </div>
+          </div>
+
+          <div className="card">
+            <DaypartTable buckets={buckets} hoveredIndex={hoveredIndex} onHover={setHoveredIndex} />
+          </div>
         </>
       )}
 
-      {data && data.buckets.length === 0 && !error && (
+      {!error && !loading && buckets.length === 0 && (
         <div className="skeleton">
           No trading data for {date} between {startTime} and {endTime} (market holiday or weekend?).
         </div>
       )}
-
-      <p className="footer-note daypart-note">
-        VIX (CBOE Volatility Index) is used as a market-wide implied-volatility proxy for both QQQ and
-        TQQQ, since IV itself is a property of individual option contracts rather than the underlying
-        ticker. Volume and VIX are pulled from the Custom Bars endpoint in 15-minute buckets, Eastern
-        Time.
-      </p>
     </section>
   );
 }

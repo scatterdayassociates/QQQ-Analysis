@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "QQQ / TQQQ Dashboard",
-  description: "Lightweight QQQ & TQQQ price, volume, and % change dashboard powered by Massive.",
+  title: "Intraday Daypart — QQQ & TQQQ",
+  description: "9:30-4:00 ET volume for QQQ and TQQQ in 15-minute buckets, with VIX as an implied-volatility proxy.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

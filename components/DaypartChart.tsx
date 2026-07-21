@@ -2,113 +2,158 @@
 
 import type { DaypartBucket } from "@/lib/massive";
 
-function formatVolume(v: number): string {
+function formatVolumeAxis(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
   return String(v);
 }
 
-// Dependency-free SVG combo chart: grouped bars for QQQ/TQQQ volume on the
-// left axis, VIX plotted as a line on an independent right-axis scale.
-export default function DaypartChart({ buckets }: { buckets: DaypartBucket[] }) {
+interface DaypartChartProps {
+  buckets: DaypartBucket[];
+  hoveredIndex: number | null;
+  onHover: (index: number | null) => void;
+}
+
+// Dependency-free SVG combo chart: grouped bars for QQQ/TQQQ volume against
+// a left axis, VIX plotted as a line against an independent right axis.
+export default function DaypartChart({ buckets, hoveredIndex, onHover }: DaypartChartProps) {
   if (buckets.length === 0) {
     return <div className="skeleton">No data for this range.</div>;
   }
 
-  const width = 900;
-  const height = 240;
-  const padding = { top: 10, right: 10, bottom: 22, left: 10 };
+  const width = 960;
+  const height = 300;
+  const padding = { top: 12, right: 46, bottom: 26, left: 46 };
   const plotW = width - padding.left - padding.right;
   const plotH = height - padding.top - padding.bottom;
 
   const maxVolume = Math.max(
     1,
     ...buckets.map((b) => Math.max(b.qqqVolume ?? 0, b.tqqqVolume ?? 0))
-  );
+  ) * 1.08;
+
   const vixValues = buckets.map((b) => b.vix).filter((v): v is number => v !== null);
-  const maxVix = vixValues.length ? Math.max(...vixValues) * 1.15 : 1;
+  const maxVix = vixValues.length ? Math.max(...vixValues) + 3 : 30;
+  const minVix = vixValues.length ? Math.max(0, Math.min(...vixValues) - 3) : 0;
 
   const slot = plotW / buckets.length;
-  const barGap = 2;
+  const barGap = 3;
   const barWidth = Math.max((slot - barGap * 3) / 2, 1);
+
+  const gridSteps = 4;
+  const volumeGridLines = Array.from({ length: gridSteps + 1 }, (_, i) => (maxVolume / gridSteps) * i);
+  const vixGridLines = Array.from({ length: gridSteps + 1 }, (_, i) => minVix + ((maxVix - minVix) / gridSteps) * i);
 
   const vixPoints = buckets
     .map((b, i) => {
       if (b.vix === null) return null;
       const x = padding.left + i * slot + slot / 2;
-      const y = padding.top + plotH - (b.vix / maxVix) * plotH;
+      const y = padding.top + plotH - ((b.vix - minVix) / (maxVix - minVix)) * plotH;
       return `${x},${y}`;
     })
     .filter((p): p is string => p !== null)
     .join(" ");
 
+  const hoverX =
+    hoveredIndex !== null ? padding.left + hoveredIndex * slot + slot / 2 : null;
+
   return (
     <svg
+      className="chart"
       viewBox={`0 0 ${width} ${height}`}
-      width="100%"
-      height={height}
       preserveAspectRatio="none"
       role="img"
       aria-label="Intraday volume and VIX chart"
+      onMouseLeave={() => onHover(null)}
     >
-      {buckets.map((b, i) => {
-        const xBase = padding.left + i * slot + barGap;
-        const qqqHeight = ((b.qqqVolume ?? 0) / maxVolume) * plotH;
-        const tqqqHeight = ((b.tqqqVolume ?? 0) / maxVolume) * plotH;
+      {volumeGridLines.map((gv, i) => {
+        const gy = padding.top + plotH - (gv / maxVolume) * plotH;
         return (
-          <g key={b.time}>
-            <rect
-              x={xBase}
-              y={padding.top + plotH - qqqHeight}
-              width={barWidth}
-              height={Math.max(qqqHeight, b.qqqVolume ? 1 : 0)}
-              fill="#5b8def"
-              opacity={0.9}
-            >
-              <title>
-                {b.time} ET — QQQ volume: {b.qqqVolume !== null ? formatVolume(b.qqqVolume) : "n/a"}
-              </title>
-            </rect>
-            <rect
-              x={xBase + barWidth + barGap}
-              y={padding.top + plotH - tqqqHeight}
-              width={barWidth}
-              height={Math.max(tqqqHeight, b.tqqqVolume ? 1 : 0)}
-              fill="#a56de2"
-              opacity={0.9}
-            >
-              <title>
-                {b.time} ET — TQQQ volume: {b.tqqqVolume !== null ? formatVolume(b.tqqqVolume) : "n/a"}
-              </title>
-            </rect>
+          <g key={`grid-${i}`}>
+            <line className="gridline" x1={padding.left} x2={width - padding.right} y1={gy} y2={gy} />
+            <text className="axis-label" x={padding.left - 8} y={gy + 3} textAnchor="end">
+              {formatVolumeAxis(gv)}
+            </text>
           </g>
         );
       })}
 
-      {vixPoints && <polyline points={vixPoints} fill="none" stroke="#f5b942" strokeWidth={2} />}
+      {vixGridLines.map((vv, i) => {
+        const vy = padding.top + plotH - ((vv - minVix) / (maxVix - minVix)) * plotH;
+        return (
+          <text
+            key={`vix-grid-${i}`}
+            className="axis-label"
+            x={width - padding.right + 8}
+            y={vy + 3}
+            textAnchor="start"
+            fill="var(--accent-vix)"
+          >
+            {vv.toFixed(0)}
+          </text>
+        );
+      })}
+
+      {buckets.map((b, i) => {
+        const xBase = padding.left + i * slot;
+        const qqqHeight = ((b.qqqVolume ?? 0) / maxVolume) * plotH;
+        const tqqqHeight = ((b.tqqqVolume ?? 0) / maxVolume) * plotH;
+        const opacity = hoveredIndex === null || hoveredIndex === i ? 1 : 0.38;
+
+        return (
+          <g key={b.time} opacity={opacity}>
+            <rect
+              x={xBase + barGap}
+              y={padding.top + plotH - qqqHeight}
+              width={barWidth}
+              height={Math.max(qqqHeight, b.qqqVolume ? 1 : 0)}
+              fill="var(--accent-qqq)"
+              rx={1.5}
+            />
+            <rect
+              x={xBase + barGap * 2 + barWidth}
+              y={padding.top + plotH - tqqqHeight}
+              width={barWidth}
+              height={Math.max(tqqqHeight, b.tqqqVolume ? 1 : 0)}
+              fill="var(--accent-tqqq)"
+              rx={1.5}
+            />
+            <rect
+              className="bucket-hit"
+              x={xBase}
+              y={padding.top}
+              width={slot}
+              height={plotH}
+              onMouseEnter={() => onHover(i)}
+            />
+          </g>
+        );
+      })}
+
+      {vixPoints && (
+        <polyline points={vixPoints} fill="none" stroke="var(--accent-vix)" strokeWidth={2.25} strokeLinejoin="round" />
+      )}
 
       {buckets.map((b, i) => {
         if (b.vix === null) return null;
         const x = padding.left + i * slot + slot / 2;
-        const y = padding.top + plotH - (b.vix / maxVix) * plotH;
-        return (
-          <circle key={`vix-${b.time}`} cx={x} cy={y} r={2.5} fill="#f5b942">
-            <title>
-              {b.time} ET — VIX: {b.vix.toFixed(2)}
-            </title>
-          </circle>
-        );
+        const y = padding.top + plotH - ((b.vix - minVix) / (maxVix - minVix)) * plotH;
+        return <circle key={`vix-${b.time}`} cx={x} cy={y} r={2.6} fill="var(--accent-vix)" />;
       })}
 
       {buckets.map((b, i) => {
-        if (i % 2 !== 0) return null; // thin out labels so they don't overlap
+        if (i % 2 !== 0 && i !== buckets.length - 1) return null;
         const x = padding.left + i * slot + slot / 2;
         return (
-          <text key={`label-${b.time}`} x={x} y={height - 6} fontSize={9} textAnchor="middle" fill="#8b93a1">
+          <text key={`label-${b.time}`} className="axis-label" x={x} y={height - 6} textAnchor="middle">
             {b.time}
           </text>
         );
       })}
+
+      {hoverX !== null && (
+        <line className="hover-guide" x1={hoverX} x2={hoverX} y1={padding.top} y2={padding.top + plotH} />
+      )}
     </svg>
   );
 }

@@ -1,37 +1,39 @@
-# QQQ / TQQQ Dashboard
+# Intraday Daypart — QQQ / TQQQ
 
-A lightweight Next.js dashboard showing QQQ and TQQQ price, volume, and
-% change (day-over-day and day-over-last-week), powered by the
+A lightweight Next.js tool showing QQQ and TQQQ intraday volume in 15-minute
+buckets across the regular session (9:30 AM–4:00 PM ET), with VIX plotted
+alongside as a market-wide implied-volatility proxy. Powered by the
 [Massive](https://massive.com) (formerly Polygon.io) market data API.
 
 - **Volume** comes from the **Custom Bars** endpoint (`/v2/aggs/ticker/{ticker}/range/...`),
-  pulled as a 30-day daily series and rendered as a bar chart.
-- **% change (Day over Day / Day over Last Week)** is computed from the
-  **Daily Ticker Summary** endpoint (`/v1/open-close/{ticker}/{date}`), using
-  the Custom Bars series to identify the correct real trading dates (so
-  weekends/holidays are skipped automatically).
+  requested as 15-minute intraday bars for the selected date.
+- **VIX** (CBOE Volatility Index, ticker `I:VIX`) is pulled the same way and plotted as an
+  implied-volatility proxy, since IV itself is a property of individual option contracts
+  (strike + expiry), not the underlying ticker — there's no single "QQQ IV" value to plot directly.
+- **Date/time filters** let you pick any trading day and narrow the window within market hours.
 
-No charting library, no CSS framework — just React, plain CSS, and a
-hand-rolled SVG bar chart, to keep the bundle small.
+No charting library, no CSS framework — just React, plain CSS, and a hand-rolled SVG chart
+(grouped volume bars + a VIX line on an independent axis), to keep the bundle small.
 
 ## Project structure
 
 ```
 app/
-  page.tsx                 client page: fetches data, renders cards
-  layout.tsx, globals.css  shell + styling
-  api/ticker-data/route.ts server route: calls Massive, keeps the API key secret
+  page.tsx                 renders the header + DaypartPanel
+  layout.tsx, globals.css  shell + design tokens (dark by default, light via prefers-color-scheme)
+  api/daypart/route.ts     server route: calls Massive, keeps the API key secret
 lib/massive.ts              Massive API client (server-only)
-components/TickerCard.tsx   price/% change card
-components/VolumeChart.tsx  dependency-free SVG volume chart
+components/DaypartPanel.tsx date/time filters + readout strip, ties chart and table together
+components/DaypartChart.tsx  dependency-free SVG chart (volume bars + VIX line, dual axis)
+components/DaypartTable.tsx  same data as an exact-value table, synced hover with the chart
 ```
 
-The API key is **only ever read server-side** (inside `lib/massive.ts`,
-used by the `/api/ticker-data` route). It is never sent to the browser.
+The API key is **only ever read server-side** (inside `lib/massive.ts`, used by the
+`/api/daypart` route). It is never sent to the browser.
 
 ## 1. Local setup
 
-Requirements: Node.js 18.18+ (Node 20/22 recommended).
+Requirements: Node.js 20.9+ (Next.js 16 requirement).
 
 ```bash
 npm install
@@ -50,89 +52,58 @@ Then run the dev server:
 npm run dev
 ```
 
-Open http://localhost:3000 — you should see cards for QQQ and TQQQ with
-price, % change, and a volume chart. If you see a red error box, it's
-almost always a missing/incorrect `MASSIVE_API_KEY` or a plan that doesn't
-include equities (stocks) data — see "Troubleshooting" below.
+Open http://localhost:3000 — you should see the toolbar (date + from/to time pickers), a
+volume/VIX chart, and a matching data table. Hovering either the chart or a table row
+highlights the same bucket in both. If you see a red error box, see "Troubleshooting" below.
 
 `.env.local` is gitignored — your key never gets committed.
 
 ## 2. Push to GitHub
 
-This project already lives in the `scatterdayassociates/QQQ-Analysis`
-repo. If you're setting this up somewhere else from scratch:
+This project lives in the `scatterdayassociates/QQQ-Analysis` repo. If you're setting this
+up somewhere else from scratch:
 
 ```bash
 git init
 git add .
-git commit -m "Add QQQ/TQQQ dashboard"
+git commit -m "Add intraday daypart tool"
 git branch -M main
 git remote add origin https://github.com/<your-org>/<your-repo>.git
 git push -u origin main
 ```
 
-**Never commit `.env.local` or your real API key.** The `.gitignore` in
-this repo already excludes it.
+**Never commit `.env.local` or your real API key.** The `.gitignore` in this repo already
+excludes it.
 
-## 3. Deploy to Vercel (step by step)
+## 3. Deploy to Vercel
 
-Vercel deployment requires your own Vercel account and GitHub authorization
-— this is not something that can be done on your behalf without your login,
-so here's the full walkthrough:
-
-1. **Create/sign in to a Vercel account:** go to https://vercel.com/signup
-   and choose **Continue with GitHub**. Authorize Vercel to access your
-   GitHub account when prompted.
-2. **Import the repo:** from the Vercel dashboard, click **Add New… →
-   Project**. Under "Import Git Repository", find and select
-   `scatterdayassociates/QQQ-Analysis`. If it's not listed, click
-   **Adjust GitHub App Permissions** and grant Vercel access to that repo
-   (either "All repositories" or select it individually).
-3. **Configure the project:**
-   - Framework Preset: Vercel will auto-detect **Next.js** — leave it as is.
-   - Root Directory: leave as `.` (the app is at the repo root).
-   - Build Command / Output Directory: leave the Next.js defaults.
-4. **Add the environment variable (this is the key auth step):**
-   - In the same import screen, expand **Environment Variables**.
-   - Name: `MASSIVE_API_KEY`
-   - Value: your Massive API key
-   - Apply it to **Production**, **Preview**, and **Development** environments.
-   - (Optional) Also add `MASSIVE_API_BASE_URL` only if Massive ever asks
-     you to point at a different base URL — otherwise leave it unset, it
-     defaults to `https://api.massive.com`.
-5. **Deploy:** click **Deploy**. Vercel will install dependencies, run
-   `next build`, and give you a live URL (e.g.
-   `qqq-analysis.vercel.app`) once it finishes — usually well under a minute.
-6. **Verify:** open the deployed URL and confirm QQQ/TQQQ data loads. If it
-   doesn't, check **Project → Settings → Environment Variables** to confirm
-   `MASSIVE_API_KEY` is set for the Production environment, then redeploy
-   (Vercel does not retroactively inject new env vars into old deployments —
-   use **Deployments → ⋯ → Redeploy** after adding/changing a variable).
-
-After the first import, every future `git push` to the connected branch
-automatically triggers a new Vercel deployment — no extra steps needed.
-
-### Rotating/protecting the API key
-
-If this key was ever pasted somewhere outside of Vercel's encrypted
-environment variable store (e.g. chat, a doc, a local file that got
-committed), treat it as exposed and rotate it from your Massive dashboard
-(Settings → API Keys), then update the value in Vercel **Project →
-Settings → Environment Variables**.
+1. Go to https://vercel.com/signup → **Continue with GitHub**, and authorize access to this repo.
+2. **Add New… → Project** → import `scatterdayassociates/QQQ-Analysis`. Vercel auto-detects Next.js.
+3. Before deploying, expand **Environment Variables** and add:
+   - `MASSIVE_API_KEY` = your Massive key (apply to Production, Preview, and Development).
+4. Click **Deploy**.
+5. After any change to an environment variable, you must **Deployments → ⋯ → Redeploy** —
+   Vercel does not retroactively inject new env vars into an already-running deployment.
 
 ## Troubleshooting
 
-- **"MASSIVE_API_KEY is not set"** — the env var isn't configured for the
-  environment you're running (local `.env.local` or Vercel project
-  settings for that specific deployment environment).
-- **502 / Massive API error 401 or 403** — the key is invalid, or your
-  Massive plan's entitlements don't cover equities (stocks) data for QQQ
-  and TQQQ. Custom Bars and Daily Ticker Summary exist under both the
-  Options and Stocks REST APIs — since QQQ/TQQQ are ETF tickers (not
-  option contracts), this app calls the **Stocks** versions of those
-  endpoints. Check your plan's entitlements at https://massive.com if you
-  get an authorization error here specifically.
-- **Data looks stale** — the app caches each ticker's server response for
-  60 seconds (`revalidate: 60`) and Massive's own data (especially
-  Daily Ticker Summary) is end-of-day, not real-time streaming. Use the
-  **Refresh** button to force a re-fetch.
+- **"MASSIVE_API_KEY is not set"** — the env var isn't configured for the environment you're
+  running (local `.env.local`, or the Vercel project settings for that deployment environment).
+- **401 "Unknown API Key"** — the key value itself doesn't match anything on Massive's side.
+  This is almost always a copy-paste issue (stray trailing space/newline). Clear the field in
+  Vercel entirely and re-paste fresh, save, then redeploy. You can confirm a key works in
+  isolation with:
+  ```bash
+  curl "https://api.massive.com/v2/aggs/ticker/QQQ/range/1/day/2024-01-02/2024-01-03?apiKey=YOUR_KEY"
+  ```
+- **403 "NOT_AUTHORIZED" / "Your plan doesn't include this data timeframe"** — your Massive
+  plan doesn't include intraday minute-level bars. The free/Basic Stocks tier only covers
+  end-of-day (daily) aggregates; intraday `Custom Bars` at minute granularity requires at
+  least the **Stocks Starter** tier. Note this is billed separately from an Options-line
+  subscription — Stocks and Options (and Indices, which covers `I:VIX`) are separate product
+  lines on Massive/Polygon.
+- **VIX column/line is empty but QQQ/TQQQ volume works** — your plan may cover Stocks
+  intraday data but not Indices data. `I:VIX` is billed under the Indices product line.
+- **Data looks stale** — the app caches each request for 60 seconds (`revalidate: 60`), and
+  Massive's aggregates are delayed (not real-time) on the Starter tier. Use **Apply** to force
+  a re-fetch.

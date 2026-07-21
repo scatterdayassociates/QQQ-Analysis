@@ -1,81 +1,26 @@
-"use client";
-
-import { useCallback, useEffect, useState } from "react";
-import type { TickerDashboardData } from "@/lib/massive";
-import TickerCard from "@/components/TickerCard";
 import DaypartPanel from "@/components/DaypartPanel";
 
-const TICKERS = ["QQQ", "TQQQ"];
-
 export default function Home() {
-  const [data, setData] = useState<Record<string, TickerDashboardData>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const results = await Promise.all(
-        TICKERS.map(async (ticker) => {
-          const res = await fetch(`/api/ticker-data?ticker=${ticker}`);
-          const json = await res.json();
-          if (!res.ok) throw new Error(json.error || `Failed to load ${ticker}`);
-          return json as TickerDashboardData;
-        })
-      );
-      const next: Record<string, TickerDashboardData> = {};
-      for (const r of results) next[r.ticker] = r;
-      setData(next);
-      setLastUpdated(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load data");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
   return (
     <main className="page">
       <div className="page-header">
         <div>
-          <h1>QQQ / TQQQ Dashboard</h1>
-          <div className="subtitle">
-            {lastUpdated ? `Last updated ${lastUpdated.toLocaleTimeString()}` : "Loading..."}
-          </div>
+          <p className="eyebrow">Scatterday Associates · QQQ / TQQQ</p>
+          <h1>Intraday Daypart — Volume &amp; VIX</h1>
+          <p className="subtitle">
+            15-minute buckets across the regular session (9:30 AM–4:00 PM ET), with VIX plotted as a
+            market-wide proxy for implied volatility.
+          </p>
         </div>
-        <button className="refresh-btn" onClick={load} disabled={loading}>
-          {loading ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
-
-      {error && <div className="error-box">{error}</div>}
-
-      <div className="cards">
-        {TICKERS.map((ticker) =>
-          data[ticker] ? (
-            <TickerCard key={ticker} data={data[ticker]} />
-          ) : (
-            !error && (
-              <div className="card skeleton" key={ticker}>
-                Loading {ticker}...
-              </div>
-            )
-          )
-        )}
       </div>
 
       <DaypartPanel />
 
-      <p className="footer-note">
-        Data from the Massive market data API (Custom Bars for volume history, Daily Ticker
-        Summary for close prices and % change). Prices are end-of-day; the dashboard refreshes
-        every 60 seconds server-side and on demand via the Refresh button.
+      <p className="footnote">
+        <strong>Methodology.</strong> VIX (CBOE Volatility Index) stands in for implied volatility on
+        both QQQ and TQQQ because IV itself is a property of an individual option contract, not the
+        underlying ticker. Volume and VIX are read from the Massive Custom Bars endpoint in 15-minute
+        buckets, Eastern Time.
       </p>
     </main>
   );
