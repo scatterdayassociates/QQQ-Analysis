@@ -15,7 +15,8 @@ interface DaypartChartProps {
 }
 
 // Dependency-free SVG combo chart: grouped bars for QQQ/TQQQ volume against
-// a left axis, VIX plotted as a line against an independent right axis.
+// a left axis, the realized-vol proxy plotted as a line against an
+// independent right axis.
 export default function DaypartChart({ buckets, hoveredIndex, onHover }: DaypartChartProps) {
   if (buckets.length === 0) {
     return <div className="skeleton">No data for this range.</div>;
@@ -32,9 +33,9 @@ export default function DaypartChart({ buckets, hoveredIndex, onHover }: Daypart
     ...buckets.map((b) => Math.max(b.qqqVolume ?? 0, b.tqqqVolume ?? 0))
   ) * 1.08;
 
-  const vixValues = buckets.map((b) => b.vix).filter((v): v is number => v !== null);
-  const maxVix = vixValues.length ? Math.max(...vixValues) + 3 : 30;
-  const minVix = vixValues.length ? Math.max(0, Math.min(...vixValues) - 3) : 0;
+  const volValues = buckets.map((b) => b.volatilityPct).filter((v): v is number => v !== null);
+  const maxVol = volValues.length ? Math.max(...volValues) + 3 : 30;
+  const minVol = volValues.length ? Math.max(0, Math.min(...volValues) - 3) : 0;
 
   const slot = plotW / buckets.length;
   const barGap = 3;
@@ -42,13 +43,13 @@ export default function DaypartChart({ buckets, hoveredIndex, onHover }: Daypart
 
   const gridSteps = 4;
   const volumeGridLines = Array.from({ length: gridSteps + 1 }, (_, i) => (maxVolume / gridSteps) * i);
-  const vixGridLines = Array.from({ length: gridSteps + 1 }, (_, i) => minVix + ((maxVix - minVix) / gridSteps) * i);
+  const volGridLines = Array.from({ length: gridSteps + 1 }, (_, i) => minVol + ((maxVol - minVol) / gridSteps) * i);
 
-  const vixPoints = buckets
+  const volPoints = buckets
     .map((b, i) => {
-      if (b.vix === null) return null;
+      if (b.volatilityPct === null) return null;
       const x = padding.left + i * slot + slot / 2;
-      const y = padding.top + plotH - ((b.vix - minVix) / (maxVix - minVix)) * plotH;
+      const y = padding.top + plotH - ((b.volatilityPct - minVol) / (maxVol - minVol)) * plotH;
       return `${x},${y}`;
     })
     .filter((p): p is string => p !== null)
@@ -63,7 +64,7 @@ export default function DaypartChart({ buckets, hoveredIndex, onHover }: Daypart
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label="Intraday volume and VIX chart"
+      aria-label="Intraday volume and realized volatility chart"
       onMouseLeave={() => onHover(null)}
     >
       {volumeGridLines.map((gv, i) => {
@@ -78,16 +79,16 @@ export default function DaypartChart({ buckets, hoveredIndex, onHover }: Daypart
         );
       })}
 
-      {vixGridLines.map((vv, i) => {
-        const vy = padding.top + plotH - ((vv - minVix) / (maxVix - minVix)) * plotH;
+      {volGridLines.map((vv, i) => {
+        const vy = padding.top + plotH - ((vv - minVol) / (maxVol - minVol)) * plotH;
         return (
           <text
-            key={`vix-grid-${i}`}
+            key={`vol-grid-${i}`}
             className="axis-label"
             x={width - padding.right + 8}
             y={vy + 3}
             textAnchor="start"
-            fill="var(--accent-vix)"
+            fill="var(--accent-vol)"
           >
             {vv.toFixed(0)}
           </text>
@@ -130,15 +131,15 @@ export default function DaypartChart({ buckets, hoveredIndex, onHover }: Daypart
         );
       })}
 
-      {vixPoints && (
-        <polyline points={vixPoints} fill="none" stroke="var(--accent-vix)" strokeWidth={2.25} strokeLinejoin="round" />
+      {volPoints && (
+        <polyline points={volPoints} fill="none" stroke="var(--accent-vol)" strokeWidth={2.25} strokeLinejoin="round" />
       )}
 
       {buckets.map((b, i) => {
-        if (b.vix === null) return null;
+        if (b.volatilityPct === null) return null;
         const x = padding.left + i * slot + slot / 2;
-        const y = padding.top + plotH - ((b.vix - minVix) / (maxVix - minVix)) * plotH;
-        return <circle key={`vix-${b.time}`} cx={x} cy={y} r={2.6} fill="var(--accent-vix)" />;
+        const y = padding.top + plotH - ((b.volatilityPct - minVol) / (maxVol - minVol)) * plotH;
+        return <circle key={`vol-${b.time}`} cx={x} cy={y} r={2.6} fill="var(--accent-vol)" />;
       })}
 
       {buckets.map((b, i) => {

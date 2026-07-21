@@ -24,7 +24,7 @@ export default function DaypartTable({ buckets, hoveredIndex, onHover }: Daypart
             <th>Time (ET)</th>
             <th>QQQ Volume</th>
             <th>TQQQ Volume</th>
-            <th>VIX (IV proxy)</th>
+            <th>Realized Vol (ann. %, proxy)</th>
           </tr>
         </thead>
         <tbody>
@@ -38,7 +38,7 @@ export default function DaypartTable({ buckets, hoveredIndex, onHover }: Daypart
               <td>{b.time}</td>
               <td>{formatVolume(b.qqqVolume)}</td>
               <td>{formatVolume(b.tqqqVolume)}</td>
-              <td>{b.vix !== null ? b.vix.toFixed(2) : "—"}</td>
+              <td>{b.volatilityPct !== null ? b.volatilityPct.toFixed(2) : "—"}</td>
             </tr>
           ))}
         </tbody>

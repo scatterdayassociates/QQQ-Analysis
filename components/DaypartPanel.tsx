@@ -132,8 +132,8 @@ export default function DaypartPanel() {
           TQQQ Volume
         </span>
         <span className="swatch">
-          <i className="dot line" style={{ background: "var(--accent-vix)" }} />
-          VIX (IV proxy)
+          <i className="dot line" style={{ background: "var(--accent-vol)" }} />
+          Realized Vol (proxy)
         </span>
       </div>
 
@@ -156,10 +156,10 @@ export default function DaypartPanel() {
                 <span className="v tqqq mono">{formatVolume(displayedBucket?.tqqqVolume ?? null)}</span>
               </div>
               <div className="stat">
-                <span className="k">VIX</span>
-                <span className="v vix mono">
-                  {displayedBucket?.vix !== null && displayedBucket?.vix !== undefined
-                    ? displayedBucket.vix.toFixed(2)
+                <span className="k">Realized Vol</span>
+                <span className="v vol mono">
+                  {displayedBucket?.volatilityPct !== null && displayedBucket?.volatilityPct !== undefined
+                    ? displayedBucket.volatilityPct.toFixed(2)
                     : "—"}
                 </span>
               </div>

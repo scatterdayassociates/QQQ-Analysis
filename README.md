@@ -1,19 +1,23 @@
 # Intraday Daypart — QQQ / TQQQ
 
 A lightweight Next.js tool showing QQQ and TQQQ intraday volume in 15-minute
-buckets across the regular session (9:30 AM–4:00 PM ET), with VIX plotted
-alongside as a market-wide implied-volatility proxy. Powered by the
-[Massive](https://massive.com) (formerly Polygon.io) market data API.
+buckets across the regular session (9:30 AM–4:00 PM ET), with a realized-volatility
+proxy plotted alongside. Powered by the [Massive](https://massive.com) (formerly
+Polygon.io) market data API.
 
 - **Volume** comes from the **Custom Bars** endpoint (`/v2/aggs/ticker/{ticker}/range/...`),
-  requested as 15-minute intraday bars for the selected date.
-- **VIX** (CBOE Volatility Index, ticker `I:VIX`) is pulled the same way and plotted as an
-  implied-volatility proxy, since IV itself is a property of individual option contracts
-  (strike + expiry), not the underlying ticker — there's no single "QQQ IV" value to plot directly.
+  requested as 15-minute intraday bars for the selected date, for both QQQ and TQQQ.
+- **Volatility proxy** uses the Parkinson range estimator — computed from each 15-minute
+  QQQ bar's own high/low and annualized to a percentage — as a stand-in for implied
+  volatility. True IV belongs to individual option contracts (strike + expiry), not the
+  underlying ticker, and a market index like VIX is billed as its own separate Indices
+  subscription on Massive/Polygon; this proxy needs neither, since it's derived entirely
+  from the QQQ bar data already being fetched for volume. It's *realized* (backward-looking,
+  from price ranges), not *implied* (forward-looking, from option prices) volatility.
 - **Date/time filters** let you pick any trading day and narrow the window within market hours.
 
 No charting library, no CSS framework — just React, plain CSS, and a hand-rolled SVG chart
-(grouped volume bars + a VIX line on an independent axis), to keep the bundle small.
+(grouped volume bars + a volatility line on an independent axis), to keep the bundle small.
 
 ## Project structure
 
@@ -22,9 +26,9 @@ app/
   page.tsx                 renders the header + DaypartPanel
   layout.tsx, globals.css  shell + design tokens (dark by default, light via prefers-color-scheme)
   api/daypart/route.ts     server route: calls Massive, keeps the API key secret
-lib/massive.ts              Massive API client (server-only)
+lib/massive.ts              Massive API client (server-only) + Parkinson volatility calc
 components/DaypartPanel.tsx date/time filters + readout strip, ties chart and table together
-components/DaypartChart.tsx  dependency-free SVG chart (volume bars + VIX line, dual axis)
+components/DaypartChart.tsx  dependency-free SVG chart (volume bars + volatility line, dual axis)
 components/DaypartTable.tsx  same data as an exact-value table, synced hover with the chart
 ```
 
@@ -53,7 +57,7 @@ npm run dev
 ```
 
 Open http://localhost:3000 — you should see the toolbar (date + from/to time pickers), a
-volume/VIX chart, and a matching data table. Hovering either the chart or a table row
+volume/volatility chart, and a matching data table. Hovering either the chart or a table row
 highlights the same bucket in both. If you see a red error box, see "Troubleshooting" below.
 
 `.env.local` is gitignored — your key never gets committed.
@@ -100,10 +104,11 @@ excludes it.
   plan doesn't include intraday minute-level bars. The free/Basic Stocks tier only covers
   end-of-day (daily) aggregates; intraday `Custom Bars` at minute granularity requires at
   least the **Stocks Starter** tier. Note this is billed separately from an Options-line
-  subscription — Stocks and Options (and Indices, which covers `I:VIX`) are separate product
-  lines on Massive/Polygon.
-- **VIX column/line is empty but QQQ/TQQQ volume works** — your plan may cover Stocks
-  intraday data but not Indices data. `I:VIX` is billed under the Indices product line.
+  subscription — Stocks and Options are separate product lines on Massive/Polygon.
 - **Data looks stale** — the app caches each request for 60 seconds (`revalidate: 60`), and
   Massive's aggregates are delayed (not real-time) on the Starter tier. Use **Apply** to force
   a re-fetch.
+
+Note: this app only ever calls the **Stocks** Custom Bars endpoint (for QQQ and TQQQ) — it
+does not use Options or Indices data, so there's no separate entitlement to worry about
+beyond Stocks Starter.

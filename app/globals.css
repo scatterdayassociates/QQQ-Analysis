@@ -8,7 +8,7 @@
   --muted-2: #5f6879;
   --accent-qqq: #5b8cff;
   --accent-tqqq: #b57bff;
-  --accent-vix: #e8a23d;
+  --accent-vol: #e8a23d;
   --focus: #7aa2ff;
   --up: #3ecf8e;
   --down: #ef6b6b;
@@ -28,7 +28,7 @@
     --muted-2: #8a8f99;
     --accent-qqq: #3660d6;
     --accent-tqqq: #8548cf;
-    --accent-vix: #b1760d;
+    --accent-vol: #b1760d;
     --focus: #3660d6;
     --up: #1f9d69;
     --down: #d0433f;
@@ -241,8 +241,8 @@ button.apply:disabled {
   color: var(--accent-tqqq);
 }
 
-.readout .stat .v.vix {
-  color: var(--accent-vix);
+.readout .stat .v.vol {
+  color: var(--accent-vol);
 }
 
 .chart-wrap {

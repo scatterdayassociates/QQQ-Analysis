@@ -79,10 +79,29 @@ export async function getCustomBars(
 
 const ET_TIME_ZONE = "America/New_York";
 
-// VIX is a market-wide index, not a per-contract value, so the same ticker
-// prefix convention as the rest of the Massive/Polygon API applies: index
-// tickers are prefixed with "I:".
-const VIX_TICKER = "I:VIX";
+const TRADING_MINUTES_PER_DAY = 390; // 9:30-4:00 ET
+const TRADING_DAYS_PER_YEAR = 252;
+
+/**
+ * Parkinson (1980) range-based volatility estimator for a single bar,
+ * annualized to a percentage comparable in scale to VIX. Uses only the
+ * bar's own high/low, so it's computed from data the app already fetches
+ * for QQQ's own Custom Bars — no Indices-tier subscription required (unlike
+ * VIX, which is billed as a separate Massive/Polygon product line).
+ *
+ * This is *realized* volatility (backward-looking, derived from price
+ * ranges), not *implied* volatility (forward-looking, derived from option
+ * prices) — a different concept that serves a similar "how volatile right
+ * now" purpose without requiring options-chain or index data.
+ */
+function parkinsonVolatilityPct(bar: CustomBar, bucketMinutes: number): number | null {
+  if (!(bar.h > 0) || !(bar.l > 0) || bar.h < bar.l) return null;
+  const logRange = Math.log(bar.h / bar.l);
+  const variance = (1 / (4 * Math.LN2)) * logRange * logRange;
+  const barsPerDay = TRADING_MINUTES_PER_DAY / bucketMinutes;
+  const barsPerYear = barsPerDay * TRADING_DAYS_PER_YEAR;
+  return Math.sqrt(variance * barsPerYear) * 100;
+}
 
 function etDateAndTime(epochMs: number): { date: string; time: string } {
   const formatter = new Intl.DateTimeFormat("en-US", {
@@ -117,7 +136,7 @@ export interface DaypartBucket {
   time: string; // "09:30", Eastern Time
   qqqVolume: number | null;
   tqqqVolume: number | null;
-  vix: number | null;
+  volatilityPct: number | null; // annualized realized-vol proxy, from QQQ's own bar range
 }
 
 export interface DaypartData {
@@ -129,10 +148,10 @@ export interface DaypartData {
 
 /**
  * Intraday daypart breakdown (default 9:30 AM - 4:00 PM ET) in 15-minute
- * buckets, combining QQQ/TQQQ volume from Custom Bars with the VIX index
- * close as a market-wide implied-volatility proxy (IV itself is a property
- * of individual option contracts, not the underlying ticker, so there is no
- * single "QQQ IV" or "TQQQ IV" value to plot directly).
+ * buckets: QQQ/TQQQ volume from Custom Bars, plus a realized-volatility
+ * proxy (Parkinson estimator) derived from QQQ's own bar ranges. See
+ * parkinsonVolatilityPct() for why this replaces VIX as the volatility
+ * signal here.
  */
 export async function getDaypartData(
   date: string,
@@ -140,10 +159,9 @@ export async function getDaypartData(
   endTime = "16:00",
   bucketMinutes = 15
 ): Promise<DaypartData> {
-  const [qqqBars, tqqqBars, vixBars] = await Promise.all([
+  const [qqqBars, tqqqBars] = await Promise.all([
     getCustomBars("QQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
     getCustomBars("TQQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
-    getCustomBars(VIX_TICKER, { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
   ]);
 
   const toEtTimeMap = (bars: CustomBar[]) => {
@@ -157,14 +175,16 @@ export async function getDaypartData(
 
   const qqqByTime = toEtTimeMap(qqqBars);
   const tqqqByTime = toEtTimeMap(tqqqBars);
-  const vixByTime = toEtTimeMap(vixBars);
 
-  const buckets: DaypartBucket[] = generateBucketTimes(startTime, endTime, bucketMinutes).map((time) => ({
-    time,
-    qqqVolume: qqqByTime.get(time)?.v ?? null,
-    tqqqVolume: tqqqByTime.get(time)?.v ?? null,
-    vix: vixByTime.get(time)?.c ?? null,
-  }));
+  const buckets: DaypartBucket[] = generateBucketTimes(startTime, endTime, bucketMinutes).map((time) => {
+    const qqqBar = qqqByTime.get(time);
+    return {
+      time,
+      qqqVolume: qqqBar?.v ?? null,
+      tqqqVolume: tqqqByTime.get(time)?.v ?? null,
+      volatilityPct: qqqBar ? parkinsonVolatilityPct(qqqBar, bucketMinutes) : null,
+    };
+  });
 
   return { date, startTime, endTime, buckets };
 }
