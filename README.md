@@ -22,6 +22,9 @@ free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inp
   from the QQQ bar data already being fetched for volume. It's *realized* (backward-looking,
   from price ranges), not *implied* (forward-looking, from option prices) volatility.
 - **Date/time filters** let you pick any trading day and narrow the window within market hours.
+- **Compare up to 5 dates at once** — the **+ Add date range** button appends another
+  independent chart/table block (its own date, time range, and fetch) stacked below the
+  current one, so you can eyeball, say, an earnings day against a normal day side by side.
 
 ## Tab 2: Fundamental Analysis
 
@@ -60,7 +63,8 @@ app/
 lib/massive.ts               Massive API client (server-only) + Parkinson volatility calc
 lib/fundamentals.ts          7-metric scoring model + tactical decision logic (server-only)
 components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis)
-components/DaypartPanel.tsx       date/time filters + readout strip, ties chart and table together
+components/DaypartPanel.tsx       manages the list of date-range entries (up to 5) + the add/remove UI
+components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
 components/DaypartTable.tsx       same data as an exact-value table, synced hover with the chart
 components/FundamentalAnalysisPanel.tsx  tactical decision card, gauge, and the 7 metric cards

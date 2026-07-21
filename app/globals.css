@@ -235,6 +235,91 @@ button.apply:disabled {
   border-radius: 2px;
 }
 
+/* ---------- daypart entries ---------- */
+
+.daypart-entries {
+  display: flex;
+  flex-direction: column;
+}
+
+.daypart-entry {
+  padding-top: 1.4rem;
+  margin-top: 1.4rem;
+  border-top: 1px solid var(--border);
+}
+
+.daypart-entry:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: none;
+}
+
+.daypart-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.daypart-entry-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted-2);
+  font-weight: 650;
+}
+
+.remove-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  line-height: 1;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.remove-btn:hover {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 45%, var(--border));
+}
+
+.add-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.5rem;
+}
+
+.add-entry-btn {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.add-entry-btn:hover:not(:disabled) {
+  border-color: var(--focus);
+  color: var(--focus);
+}
+
+.add-entry-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.add-entry-hint {
+  color: var(--muted-2);
+  font-size: 0.78rem;
+}
+
 /* ---------- cards ---------- */
 
 .card {
