@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { TickerDashboardData } from "@/lib/massive";
 import TickerCard from "@/components/TickerCard";
+import DaypartPanel from "@/components/DaypartPanel";
 
 const TICKERS = ["QQQ", "TQQQ"];
 
@@ -68,6 +69,8 @@ export default function Home() {
           )
         )}
       </div>
+
+      <DaypartPanel />
 
       <p className="footer-note">
         Data from the Massive market data API (Custom Bars for volume history, Daily Ticker

@@ -172,3 +172,128 @@ body {
   font-size: 0.75rem;
   line-height: 1.5;
 }
+
+.daypart-panel {
+  margin-top: 1.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem 1.4rem 1.5rem;
+}
+
+.daypart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.daypart-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.daypart-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.daypart-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.daypart-filters input,
+.daypart-filters select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.daypart-legend {
+  display: flex;
+  gap: 1.25rem;
+  margin-bottom: 0.75rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.daypart-legend .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.dot-qqq {
+  background: #5b8def;
+}
+
+.dot-tqqq {
+  background: #a56de2;
+}
+
+.dot-vix {
+  background: #f5b942;
+}
+
+.daypart-table-wrap {
+  margin-top: 1rem;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.daypart-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.daypart-table th,
+.daypart-table td {
+  text-align: right;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.daypart-table th:first-child,
+.daypart-table td:first-child {
+  text-align: left;
+}
+
+.daypart-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+}
+
+.daypart-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.daypart-note {
+  margin-top: 1rem;
+}

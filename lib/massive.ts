@@ -167,3 +167,95 @@ export async function getTickerDashboardData(ticker: string): Promise<TickerDash
     dayOverLastWeekChangePct: pctChange(lastWeek?.close, latest?.close),
   };
 }
+
+const ET_TIME_ZONE = "America/New_York";
+
+// VIX is a market-wide index, not a per-contract value, so the same ticker
+// prefix convention as the rest of the Massive/Polygon API applies: index
+// tickers are prefixed with "I:".
+const VIX_TICKER = "I:VIX";
+
+function etDateAndTime(epochMs: number): { date: string; time: string } {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: ET_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(new Date(epochMs)).map((p) => [p.type, p.value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+}
+
+function generateBucketTimes(startTime: string, endTime: string, stepMinutes: number): string[] {
+  const [startHour, startMinute] = startTime.split(":").map(Number);
+  const [endHour, endMinute] = endTime.split(":").map(Number);
+  const startTotal = startHour * 60 + startMinute;
+  const endTotal = endHour * 60 + endMinute;
+
+  const times: string[] = [];
+  for (let minutes = startTotal; minutes < endTotal; minutes += stepMinutes) {
+    const hour = Math.floor(minutes / 60).toString().padStart(2, "0");
+    const minute = (minutes % 60).toString().padStart(2, "0");
+    times.push(`${hour}:${minute}`);
+  }
+  return times;
+}
+
+export interface DaypartBucket {
+  time: string; // "09:30", Eastern Time
+  qqqVolume: number | null;
+  tqqqVolume: number | null;
+  vix: number | null;
+}
+
+export interface DaypartData {
+  date: string;
+  startTime: string;
+  endTime: string;
+  buckets: DaypartBucket[];
+}
+
+/**
+ * Intraday daypart breakdown (default 9:30 AM - 4:00 PM ET) in 15-minute
+ * buckets, combining QQQ/TQQQ volume from Custom Bars with the VIX index
+ * close as a market-wide implied-volatility proxy (IV itself is a property
+ * of individual option contracts, not the underlying ticker, so there is no
+ * single "QQQ IV" or "TQQQ IV" value to plot directly).
+ */
+export async function getDaypartData(
+  date: string,
+  startTime = "09:30",
+  endTime = "16:00",
+  bucketMinutes = 15
+): Promise<DaypartData> {
+  const [qqqBars, tqqqBars, vixBars] = await Promise.all([
+    getCustomBars("QQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
+    getCustomBars("TQQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
+    getCustomBars(VIX_TICKER, { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
+  ]);
+
+  const toEtTimeMap = (bars: CustomBar[]) => {
+    const map = new Map<string, CustomBar>();
+    for (const bar of bars) {
+      const { date: barDate, time } = etDateAndTime(bar.t);
+      if (barDate === date) map.set(time, bar);
+    }
+    return map;
+  };
+
+  const qqqByTime = toEtTimeMap(qqqBars);
+  const tqqqByTime = toEtTimeMap(tqqqBars);
+  const vixByTime = toEtTimeMap(vixBars);
+
+  const buckets: DaypartBucket[] = generateBucketTimes(startTime, endTime, bucketMinutes).map((time) => ({
+    time,
+    qqqVolume: qqqByTime.get(time)?.v ?? null,
+    tqqqVolume: tqqqByTime.get(time)?.v ?? null,
+    vix: vixByTime.get(time)?.c ?? null,
+  }));
+
+  return { date, startTime, endTime, buckets };
+}
