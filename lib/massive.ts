@@ -123,6 +123,44 @@ export async function getTickerMarketCap(ticker: string): Promise<number | null>
   }
 }
 
+interface BenzingaEarningsEntry {
+  date?: string;
+}
+
+interface BenzingaEarningsResponse {
+  results?: BenzingaEarningsEntry[];
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Earnings endpoint (Benzinga partner data via Massive's Benzinga
+ * partnership) — scheduled/reported earnings dates for a ticker within a
+ * date range. This is a premium partner feed, not guaranteed on every plan,
+ * so failures are treated as "no earnings data available" rather than
+ * fatal, same as getTickerMarketCap. Massive's docs site blocks automated
+ * fetches, so the exact response field names couldn't be independently
+ * verified before writing this — it reads defensively (only pulls out a
+ * YYYY-MM-DD "date" field and ignores everything else) and returns an
+ * empty list rather than throwing if the shape doesn't match.
+ */
+export async function getUpcomingEarningsDates(ticker: string, from: string, to: string): Promise<string[]> {
+  try {
+    const data = await massiveFetch<BenzingaEarningsResponse>("/benzinga/v1/earnings", {
+      ticker,
+      "date.gte": from,
+      "date.lte": to,
+      limit: "10",
+    });
+    const dates = (data.results ?? [])
+      .map((r) => r.date)
+      .filter((d): d is string => typeof d === "string" && DATE_RE.test(d));
+    return [...new Set(dates)].sort();
+  } catch {
+    return [];
+  }
+}
+
 const ET_TIME_ZONE = "America/New_York";
 
 const TRADING_MINUTES_PER_DAY = 390; // 9:30-4:00 ET

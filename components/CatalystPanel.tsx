@@ -181,7 +181,7 @@ export default function CatalystPanel() {
                 </thead>
                 <tbody>
                   {data.upcoming.map((u) => (
-                    <tr key={`${u.date}-${u.eventType}`}>
+                    <tr key={`${u.date}-${u.eventType}-${u.ticker ?? ""}`}>
                       <td>{u.date}</td>
                       <td>
                         <span className={`event-chip event-${u.eventType.toLowerCase()}`}>{u.eventType}</span>{" "}
@@ -190,6 +190,13 @@ export default function CatalystPanel() {
                       <td>{u.daysUntil}</td>
                     </tr>
                   ))}
+                  {data.upcoming.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="skeleton">
+                        No upcoming catalysts in the current window.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -206,10 +213,12 @@ export default function CatalystPanel() {
         current plan. The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled
         from the Federal Reserve&apos;s and BLS&apos;s published schedules — historical reactions are
         computed as the real close-to-close % move from the trading day before each event to the event
-        day itself, covering Jan 2026–present. Unlike the source app this replicates, per-company{" "}
-        <strong>Earnings</strong> is not tracked as an event type here: there&apos;s no verified earnings-
-        calendar data source in the current Massive plan, and hardcoding earnings dates without a
-        reliable feed risks showing stale or wrong dates.
+        day itself, covering Jan 2026–present. <strong>Earnings</strong> in the Upcoming Catalysts table
+        is each top-10 ticker&apos;s next scheduled report, pulled live from Massive&apos;s Benzinga
+        earnings partnership endpoint — if it&apos;s a premium add-on not included on the current plan,
+        those rows will simply be absent rather than the page failing. Historical reactions don&apos;t
+        include past earnings dates, since there&apos;s no verified historical-earnings source wired up
+        here, and hardcoding those risks showing stale or wrong dates.
       </p>
     </section>
   );

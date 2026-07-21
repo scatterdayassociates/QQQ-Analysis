@@ -4,23 +4,26 @@
 // calendar), rebuilt against Massive (for prices/volume) plus a hardcoded,
 // source-verified macro calendar (no live calendar API in the current plan).
 //
-// Two scope decisions versus the source app, both disclosed in the UI:
+// Scope decisions versus the source app, both disclosed in the UI:
 //   - The top-10 list is a fixed snapshot (ticker + name), not a live,
 //     continuously-rebalanced weighting — QQQ/NDX weights drift with price
 //     and quarterly rebalances, so treat the ranking as "as of" rather than
 //     real-time.
-//   - Reactions/catalysts here cover macro events only (FOMC, CPI, Jobs
-//     Report) — the source app also tracked per-company Earnings as an
-//     event type, but there's no verified earnings-calendar data source
-//     wired up in this Massive plan, and hardcoding earnings dates without
-//     a reliable feed risks exactly the stale/wrong-date problem this
-//     rebuild has otherwise been careful to avoid.
+//   - Historical reactions cover macro events only (FOMC, CPI, Jobs
+//     Report) — there's no verified historical-earnings-date source wired
+//     up, and hardcoding past earnings dates without a reliable feed risks
+//     the stale/wrong-date problem this rebuild has otherwise avoided.
+//     Upcoming Catalysts, however, does include each top-10 ticker's next
+//     scheduled earnings date, pulled live from Massive's Benzinga
+//     earnings partnership endpoint (see getUpcomingEarningsDates in
+//     lib/massive.ts) — that's a real-time lookup, not a hardcoded guess,
+//     so it doesn't carry the same staleness risk.
 //
 // This file must only ever be imported from server code, since it reads
 // equity data through lib/massive.ts (which reads the secret
 // MASSIVE_API_KEY).
 
-import { getCustomBars, getTickerMarketCap } from "./massive";
+import { getCustomBars, getTickerMarketCap, getUpcomingEarningsDates } from "./massive";
 
 // Top 10 Nasdaq-100 (QQQ) holdings by weight, as of mid-2026. Weights drift
 // with price and the index rebalances quarterly, so re-verify this list
@@ -38,7 +41,7 @@ const TOP_10: { ticker: string; name: string }[] = [
   { ticker: "NFLX", name: "Netflix, Inc." },
 ];
 
-type EventType = "FOMC" | "CPI" | "NFP";
+type EventType = "FOMC" | "CPI" | "NFP" | "Earnings";
 
 interface MacroEvent {
   date: string; // YYYY-MM-DD
@@ -104,6 +107,7 @@ export interface UpcomingCatalyst {
   date: string;
   eventType: EventType;
   eventLabel: string;
+  ticker: string | null; // set for Earnings rows, null for macro-wide events
   daysUntil: number;
 }
 
@@ -114,17 +118,23 @@ export interface CatalystTrackerData {
   upcoming: UpcomingCatalyst[];
 }
 
+const EARNINGS_LOOKAHEAD_DAYS = 90; // covers the next quarterly reporting cycle for all 10 tickers
+
 export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   const today = new Date();
   const todayStr = toDateStr(today);
   const from = new Date(today);
   from.setDate(from.getDate() - 240); // comfortably covers Jan 2026 through today, plus a leading trading day
+  const earningsWindowEnd = new Date(today);
+  earningsWindowEnd.setDate(earningsWindowEnd.getDate() + EARNINGS_LOOKAHEAD_DAYS);
+  const earningsWindowEndStr = toDateStr(earningsWindowEnd);
 
-  const [barsByTicker, marketCaps] = await Promise.all([
+  const [barsByTicker, marketCaps, earningsByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
+    Promise.all(TOP_10.map((c) => getUpcomingEarningsDates(c.ticker, todayStr, earningsWindowEndStr))),
   ]);
 
   const components: CatalystComponent[] = TOP_10.map((c, i) => {
@@ -176,14 +186,32 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const oneDayMs = 24 * 60 * 60 * 1000;
   const todayMidnightUtc = new Date(`${todayStr}T00:00:00Z`).getTime();
-  const upcoming: UpcomingCatalyst[] = MACRO_EVENTS.filter((e) => e.date > todayStr)
-    .map((e) => ({
-      date: e.date,
-      eventType: e.type,
-      eventLabel: e.label,
-      daysUntil: Math.round((new Date(`${e.date}T00:00:00Z`).getTime() - todayMidnightUtc) / oneDayMs),
-    }))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  const daysUntil = (date: string) => Math.round((new Date(`${date}T00:00:00Z`).getTime() - todayMidnightUtc) / oneDayMs);
+
+  const macroUpcoming: UpcomingCatalyst[] = MACRO_EVENTS.filter((e) => e.date > todayStr).map((e) => ({
+    date: e.date,
+    eventType: e.type,
+    eventLabel: e.label,
+    ticker: null,
+    daysUntil: daysUntil(e.date),
+  }));
+
+  const earningsUpcoming: UpcomingCatalyst[] = [];
+  TOP_10.forEach((c, i) => {
+    for (const date of earningsByTicker[i]) {
+      earningsUpcoming.push({
+        date,
+        eventType: "Earnings",
+        eventLabel: `${c.ticker} Earnings`,
+        ticker: c.ticker,
+        daysUntil: daysUntil(date),
+      });
+    }
+  });
+
+  const upcoming: UpcomingCatalyst[] = [...macroUpcoming, ...earningsUpcoming].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  );
 
   return { asOf: todayStr, components, reactions, upcoming };
 }

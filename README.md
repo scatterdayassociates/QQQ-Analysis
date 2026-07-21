@@ -69,9 +69,14 @@ calendar.
   app's placeholder-style calendar.
 - **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
   unavailable on the current plan, rather than failing the whole table.
-- **Per-company Earnings is intentionally not tracked** as an event type here, unlike the source
-  app — there's no verified earnings-calendar data source in the current Massive plan, and
-  hardcoding earnings dates without a reliable feed risks showing stale or wrong dates.
+- **Upcoming earnings** for each top-10 ticker come from Massive's Benzinga earnings partnership
+  endpoint (`/benzinga/v1/earnings`), a live lookup — not a hardcoded guess. If that endpoint isn't
+  included on the current plan, earnings rows are simply absent from Upcoming Catalysts rather
+  than breaking the page (see Troubleshooting).
+- **Historical reactions cover macro events only** (FOMC/CPI/jobs reports), not past earnings —
+  there's no verified *historical* earnings-date source wired up, and hardcoding past dates
+  without a reliable feed risks showing stale or wrong dates. Upcoming earnings dates don't carry
+  that risk since they're fetched live.
 
 No charting library, no CSS framework — just React, plain CSS, and hand-rolled SVG (a combo
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
@@ -185,7 +190,20 @@ excludes it.
   Custom Bars responses via `next_url` regardless of the requested `limit`; `getCustomBars`
   follows pagination automatically, so if you see this, check you're not calling the endpoint
   directly outside the app's client.
+- **No Earnings rows in Upcoming Catalysts, no error shown** — expected if the current Massive
+  plan doesn't include the Benzinga earnings partnership add-on (`getUpcomingEarningsDates` in
+  `lib/massive.ts` swallows that failure and returns an empty list rather than erroring). To
+  confirm, test the endpoint directly:
+  ```bash
+  curl "https://api.massive.com/benzinga/v1/earnings?ticker=AAPL&date.gte=2026-01-01&date.lte=2026-12-31&apiKey=YOUR_KEY"
+  ```
+  A 401/403 confirms it's a plan/entitlement gap. Note the exact query parameter names
+  (`date.gte`/`date.lte`) and response field names weren't independently verified against
+  Massive's docs (the docs site blocks automated fetches) — if the endpoint responds but no
+  earnings show up, the response shape may differ from what `lib/massive.ts` expects; share the
+  raw JSON and it can be adjusted.
 
-Note: this app only calls Massive's **Stocks** Custom Bars endpoint — it does not use Massive's
-Options or Indices data (VIX and the Dollar Index come from FRED instead, see above), so there's
-no separate Massive entitlement to worry about beyond Stocks Starter.
+Note: this app calls Massive's **Stocks** Custom Bars endpoint plus the **Benzinga earnings**
+partnership endpoint — it does not use Massive's Options or Indices data (VIX and the Dollar
+Index come from FRED instead, see above). Stocks Custom Bars only needs Stocks Starter; the
+Benzinga earnings endpoint may be a separate add-on depending on your plan (see above).

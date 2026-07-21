@@ -9,6 +9,7 @@
   --accent-qqq: #5b8cff;
   --accent-tqqq: #b57bff;
   --accent-vol: #e8a23d;
+  --accent-earnings: #2bb3a3;
   --focus: #7aa2ff;
   --up: #3ecf8e;
   --down: #ef6b6b;
@@ -29,6 +30,7 @@
     --accent-qqq: #3660d6;
     --accent-tqqq: #8548cf;
     --accent-vol: #b1760d;
+    --accent-earnings: #0f8a7d;
     --focus: #3660d6;
     --up: #1f9d69;
     --down: #d0433f;
@@ -607,6 +609,12 @@ tbody tr.active td {
   background: color-mix(in srgb, var(--accent-qqq) 16%, var(--surface));
   border-color: color-mix(in srgb, var(--accent-qqq) 45%, var(--border));
   color: var(--accent-qqq);
+}
+
+.event-chip.event-earnings {
+  background: color-mix(in srgb, var(--accent-earnings) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-earnings) 45%, var(--border));
+  color: var(--accent-earnings);
 }
 
 /* ---------- fundamental analysis ---------- */
