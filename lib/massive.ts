@@ -15,11 +15,7 @@ function getApiKey(): string {
   return key;
 }
 
-async function massiveFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  const url = new URL(path, BASE_URL);
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, value);
-  }
+async function fetchJson<T>(url: URL): Promise<T> {
   url.searchParams.set("apiKey", getApiKey());
 
   const res = await fetch(url.toString(), {
@@ -29,10 +25,18 @@ async function massiveFetch<T>(path: string, params: Record<string, string> = {}
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Massive API error ${res.status} for ${path}: ${body.slice(0, 300)}`);
+    throw new Error(`Massive API error ${res.status} for ${url.pathname}: ${body.slice(0, 300)}`);
   }
 
   return res.json() as Promise<T>;
+}
+
+async function massiveFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  const url = new URL(path, BASE_URL);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return fetchJson<T>(url);
 }
 
 export interface CustomBar {
@@ -51,11 +55,20 @@ interface CustomBarsResponse {
   status: string;
   results?: CustomBar[];
   resultsCount?: number;
+  next_url?: string;
 }
+
+const MAX_PAGES = 20;
 
 /**
  * Custom Bars (Aggregates) endpoint.
  * GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+ *
+ * Massive paginates results via `next_url` regardless of the requested
+ * `limit` (observed: a single trading day of 15-minute bars can come back
+ * split across several pages, starting with pre-market). This follows
+ * next_url until exhausted so intraday callers actually get the full day
+ * rather than silently only seeing whatever the first page happened to be.
  */
 export async function getCustomBars(
   ticker: string,
@@ -67,14 +80,25 @@ export async function getCustomBars(
     limit?: number;
   }
 ): Promise<CustomBar[]> {
-  const { multiplier = 1, timespan = "day", from, to, limit = 120 } = opts;
+  const { multiplier = 1, timespan = "day", from, to, limit = 50000 } = opts;
   const path = `/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/${multiplier}/${timespan}/${from}/${to}`;
-  const data = await massiveFetch<CustomBarsResponse>(path, {
+
+  let data = await massiveFetch<CustomBarsResponse>(path, {
     adjusted: "true",
     sort: "asc",
     limit: String(limit),
   });
-  return data.results ?? [];
+
+  const results = [...(data.results ?? [])];
+
+  let pages = 0;
+  while (data.next_url && pages < MAX_PAGES) {
+    data = await fetchJson<CustomBarsResponse>(new URL(data.next_url));
+    results.push(...(data.results ?? []));
+    pages += 1;
+  }
+
+  return results;
 }
 
 const ET_TIME_ZONE = "America/New_York";
@@ -160,8 +184,8 @@ export async function getDaypartData(
   bucketMinutes = 15
 ): Promise<DaypartData> {
   const [qqqBars, tqqqBars] = await Promise.all([
-    getCustomBars("QQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
-    getCustomBars("TQQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date, limit: 200 }),
+    getCustomBars("QQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date }),
+    getCustomBars("TQQQ", { multiplier: bucketMinutes, timespan: "minute", from: date, to: date }),
   ]);
 
   const toEtTimeMap = (bars: CustomBar[]) => {
