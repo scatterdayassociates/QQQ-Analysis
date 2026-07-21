@@ -330,6 +330,47 @@ button.apply:disabled {
   margin-bottom: 1.1rem;
 }
 
+.table-accordion {
+  padding: 0.7rem 1.1rem;
+}
+
+.table-accordion summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.table-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.table-accordion-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted-2);
+  font-weight: 500;
+  font-size: 0.76rem;
+}
+
+.table-accordion-chevron {
+  color: var(--muted-2);
+  transition: transform 0.15s ease;
+}
+
+.table-accordion[open] .table-accordion-chevron {
+  transform: rotate(90deg);
+}
+
+.table-accordion-body {
+  margin-top: 0.9rem;
+}
+
 .readout {
   display: flex;
   gap: 1.75rem;

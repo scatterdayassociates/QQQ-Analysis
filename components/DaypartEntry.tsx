@@ -166,9 +166,20 @@ export default function DaypartEntry({ entryId, label, showRemove, onRemove }: D
             </div>
           </div>
 
-          <div className="card">
-            <DaypartTable buckets={buckets} hoveredIndex={hoveredIndex} onHover={setHoveredIndex} />
-          </div>
+          <details className="card table-accordion">
+            <summary>
+              <span>Data table</span>
+              <span className="table-accordion-meta mono">
+                <span className="table-accordion-count">{buckets.length} rows</span>
+                <svg className="table-accordion-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                  <path d="M5 3 L11 8 L5 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </summary>
+            <div className="table-accordion-body">
+              <DaypartTable buckets={buckets} hoveredIndex={hoveredIndex} onHover={setHoveredIndex} />
+            </div>
+          </details>
         </>
       )}
 
