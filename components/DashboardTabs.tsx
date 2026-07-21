@@ -3,10 +3,12 @@
 import { useState } from "react";
 import DaypartPanel from "./DaypartPanel";
 import FundamentalAnalysisPanel from "./FundamentalAnalysisPanel";
+import CatalystPanel from "./CatalystPanel";
 
 const TABS = [
   { key: "daypart", label: "Intraday Daypart" },
   { key: "fundamentals", label: "Fundamental Analysis" },
+  { key: "catalysts", label: "Catalyst Tracker" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -33,6 +35,7 @@ export default function DashboardTabs() {
 
       {active === "daypart" && <DaypartPanel />}
       {active === "fundamentals" && <FundamentalAnalysisPanel />}
+      {active === "catalysts" && <CatalystPanel />}
     </div>
   );
 }

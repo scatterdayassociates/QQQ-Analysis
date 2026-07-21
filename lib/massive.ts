@@ -101,6 +101,28 @@ export async function getCustomBars(
   return results;
 }
 
+interface TickerDetailsResponse {
+  results?: {
+    market_cap?: number;
+  };
+}
+
+/**
+ * Ticker Details (Reference) endpoint — static company reference data, not
+ * real-time market data. Unlike intraday aggregates, reference data has
+ * historically been available on lower Massive/Polygon plan tiers, but
+ * that's not guaranteed for every account, so failures here are treated as
+ * "market cap unavailable" rather than a fatal error for the whole caller.
+ */
+export async function getTickerMarketCap(ticker: string): Promise<number | null> {
+  try {
+    const data = await massiveFetch<TickerDetailsResponse>(`/v3/reference/tickers/${encodeURIComponent(ticker)}`);
+    return data.results?.market_cap ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const ET_TIME_ZONE = "America/New_York";
 
 const TRADING_MINUTES_PER_DAY = 390; // 9:30-4:00 ET

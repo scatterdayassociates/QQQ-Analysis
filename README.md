@@ -1,11 +1,13 @@
 # QQQ / TQQQ Dashboard
 
-A lightweight Next.js dashboard with two tabs:
+A lightweight Next.js dashboard with three tabs:
 
 1. **Intraday Daypart** — QQQ/TQQQ intraday volume in 15-minute buckets across the regular
    session (9:30 AM–4:00 PM ET), with a realized-volatility proxy plotted alongside.
 2. **Fundamental Analysis** — a 7-metric market strength/tactical model (macro, trend, credit,
    breadth, volatility) with a plain-English explanation of each metric.
+3. **Catalyst Tracker** — the top 10 Nasdaq-100 components, their historical 1-day reactions to
+   macro catalysts (FOMC/CPI/jobs reports), and an upcoming-catalyst calendar.
 
 Powered by the [Massive](https://massive.com) (formerly Polygon.io) market data API, plus
 free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inputs (see below).
@@ -48,6 +50,29 @@ The source model's hardcoded "Red Folder" economic-event calendar (static Jan-20
 dates) is **not** reproduced — it wasn't a live feed in the original either, and there's no
 data source wired up here to keep one current.
 
+## Tab 3: Catalyst Tracker
+
+Replicates the intent of the source "Catalyst100" app: a top-10 Nasdaq-100 components table
+(price, change, volume, market cap), a historical 1-day reactions table (how each of those 10
+tickers actually moved close-to-close around past macro events), and an upcoming-catalysts
+calendar.
+
+- The **top-10 list** (NVDA, AAPL, MSFT, AMZN, GOOGL, AVGO, META, TSLA, COST, NFLX) is a fixed
+  snapshot of Nasdaq-100/QQQ weightings as of mid-2026 — QQQ's weights drift with price and the
+  index rebalances quarterly, so this is "as of," not a live, continuously-rebalanced ranking.
+  Re-verify periodically against Invesco's live QQQ holdings page.
+- **Reactions are real, computed values** — the close price the trading day before each macro
+  event vs. the close on the event day itself, from Massive's Custom Bars, not fabricated
+  numbers. Covers Jan 2026–present.
+- The **macro calendar** (FOMC rate decisions, CPI releases, jobs reports) is hardcoded from the
+  Federal Reserve's and BLS's published 2026 schedules — real, verified dates, not the source
+  app's placeholder-style calendar.
+- **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
+  unavailable on the current plan, rather than failing the whole table.
+- **Per-company Earnings is intentionally not tracked** as an event type here, unlike the source
+  app — there's no verified earnings-calendar data source in the current Massive plan, and
+  hardcoding earnings dates without a reliable feed risks showing stale or wrong dates.
+
 No charting library, no CSS framework — just React, plain CSS, and hand-rolled SVG (a combo
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
 bundle small.
@@ -60,19 +85,23 @@ app/
   layout.tsx, globals.css  shell + design tokens (dark by default, light via prefers-color-scheme)
   api/daypart/route.ts        server route: daypart tab, calls Massive, keeps the API key secret
   api/fundamentals/route.ts   server route: fundamentals tab, calls Massive + FRED
+  api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive
 lib/massive.ts               Massive API client (server-only) + Parkinson volatility calc
 lib/fundamentals.ts          7-metric scoring model + tactical decision logic (server-only)
-components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis)
+lib/catalysts.ts             top-10 list + macro calendar + 1-day reaction calc (server-only)
+components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker)
 components/DaypartPanel.tsx       manages the list of date-range entries (up to 5) + the add/remove UI
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
 components/DaypartTable.tsx       same data as an exact-value table, synced hover with the chart
 components/FundamentalAnalysisPanel.tsx  tactical decision card, gauge, and the 7 metric cards
 components/StrengthGauge.tsx      dependency-free SVG semicircle gauge
+components/CatalystPanel.tsx      top-10 table, reactions table (with filters), upcoming-catalysts table
 ```
 
-The Massive API key is **only ever read server-side** (inside `lib/massive.ts`, used by both
-API routes). It is never sent to the browser. FRED's CSV endpoint is public and needs no key.
+The Massive API key is **only ever read server-side** (inside `lib/massive.ts`, used by all
+three API routes). It is never sent to the browser. FRED's CSV endpoint is public and needs no
+key.
 
 ## 1. Local setup
 
