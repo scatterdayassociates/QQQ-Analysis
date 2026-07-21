@@ -214,11 +214,12 @@ export default function CatalystPanel() {
         from the Federal Reserve&apos;s and BLS&apos;s published schedules — historical reactions are
         computed as the real close-to-close % move from the trading day before each event to the event
         day itself, covering Jan 2026–present. <strong>Earnings</strong> in the Upcoming Catalysts table
-        is each top-10 ticker&apos;s next scheduled report, pulled live from Massive&apos;s Benzinga
-        earnings partnership endpoint — if it&apos;s a premium add-on not included on the current plan,
-        those rows will simply be absent rather than the page failing. Historical reactions don&apos;t
-        include past earnings dates, since there&apos;s no verified historical-earnings source wired up
-        here, and hardcoding those risks showing stale or wrong dates.
+        is each top-10 ticker&apos;s next scheduled report, pulled live and free from Yahoo Finance&apos;s
+        public quoteSummary endpoint (the same unofficial API the <code>yfinance</code> Python package
+        wraps) — no signup, no cost, but unofficial and not guaranteed stable, so those rows will simply
+        be absent rather than the page failing if it changes or blocks the request. Historical reactions
+        don&apos;t include past earnings dates, since there&apos;s no verified historical-earnings source
+        wired up here, and hardcoding those risks showing stale or wrong dates.
       </p>
     </section>
   );

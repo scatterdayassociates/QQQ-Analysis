@@ -14,16 +14,62 @@
 //     up, and hardcoding past earnings dates without a reliable feed risks
 //     the stale/wrong-date problem this rebuild has otherwise avoided.
 //     Upcoming Catalysts, however, does include each top-10 ticker's next
-//     scheduled earnings date, pulled live from Massive's Benzinga
-//     earnings partnership endpoint (see getUpcomingEarningsDates in
-//     lib/massive.ts) — that's a real-time lookup, not a hardcoded guess,
-//     so it doesn't carry the same staleness risk.
+//     scheduled earnings date, pulled live from Yahoo Finance's public
+//     quoteSummary endpoint (see getNextEarningsDateYahoo below) — that's
+//     a real-time lookup, not a hardcoded guess, so it doesn't carry the
+//     same staleness risk. (Massive's own Benzinga earnings partnership
+//     endpoint was tried first but returned NOT_AUTHORIZED on the current
+//     plan — see git history for that attempt.)
 //
 // This file must only ever be imported from server code, since it reads
 // equity data through lib/massive.ts (which reads the secret
 // MASSIVE_API_KEY).
 
-import { getCustomBars, getTickerMarketCap, getUpcomingEarningsDates } from "./massive";
+import { getCustomBars, getTickerMarketCap } from "./massive";
+
+interface YahooCalendarEventsResponse {
+  quoteSummary?: {
+    result?: Array<{
+      calendarEvents?: {
+        earnings?: {
+          earningsDate?: Array<{ raw?: number }>;
+        };
+      };
+    }>;
+  };
+}
+
+/**
+ * Yahoo Finance's public quoteSummary endpoint — the same undocumented API
+ * the `yfinance` Python package wraps. Free, no signup, no API key. Unlike
+ * Massive's Benzinga earnings endpoint (rejected as NOT_AUTHORIZED on this
+ * account's plan), Yahoo's endpoint doesn't require any subscription — but
+ * it's unofficial and can change, add rate limits, or start requiring an
+ * auth "crumb" without notice, so failures here are treated as "no
+ * earnings date available" rather than fatal, same as getTickerMarketCap.
+ */
+async function getNextEarningsDateYahoo(ticker: string): Promise<string | null> {
+  try {
+    const url = new URL(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}`);
+    url.searchParams.set("modules", "calendarEvents");
+    const res = await fetch(url.toString(), {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        Accept: "application/json",
+      },
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as YahooCalendarEventsResponse;
+    const dates = data.quoteSummary?.result?.[0]?.calendarEvents?.earnings?.earningsDate ?? [];
+    const withRaw = dates.find((d) => typeof d.raw === "number");
+    if (!withRaw || typeof withRaw.raw !== "number") return null;
+    return new Date(withRaw.raw * 1000).toISOString().slice(0, 10);
+  } catch {
+    return null;
+  }
+}
 
 // Top 10 Nasdaq-100 (QQQ) holdings by weight, as of mid-2026. Weights drift
 // with price and the index rebalances quarterly, so re-verify this list
@@ -129,12 +175,12 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   earningsWindowEnd.setDate(earningsWindowEnd.getDate() + EARNINGS_LOOKAHEAD_DAYS);
   const earningsWindowEndStr = toDateStr(earningsWindowEnd);
 
-  const [barsByTicker, marketCaps, earningsByTicker] = await Promise.all([
+  const [barsByTicker, marketCaps, nextEarningsByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
-    Promise.all(TOP_10.map((c) => getUpcomingEarningsDates(c.ticker, todayStr, earningsWindowEndStr))),
+    Promise.all(TOP_10.map((c) => getNextEarningsDateYahoo(c.ticker))),
   ]);
 
   const components: CatalystComponent[] = TOP_10.map((c, i) => {
@@ -198,7 +244,8 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const earningsUpcoming: UpcomingCatalyst[] = [];
   TOP_10.forEach((c, i) => {
-    for (const date of earningsByTicker[i]) {
+    const date = nextEarningsByTicker[i];
+    if (date && date > todayStr && date <= earningsWindowEndStr) {
       earningsUpcoming.push({
         date,
         eventType: "Earnings",

@@ -69,10 +69,13 @@ calendar.
   app's placeholder-style calendar.
 - **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
   unavailable on the current plan, rather than failing the whole table.
-- **Upcoming earnings** for each top-10 ticker come from Massive's Benzinga earnings partnership
-  endpoint (`/benzinga/v1/earnings`), a live lookup — not a hardcoded guess. If that endpoint isn't
-  included on the current plan, earnings rows are simply absent from Upcoming Catalysts rather
-  than breaking the page (see Troubleshooting).
+- **Upcoming earnings** for each top-10 ticker come from Yahoo Finance's public `quoteSummary`
+  endpoint (`calendarEvents` module) — the same unofficial API the `yfinance` Python package
+  wraps. Free, no signup, no API key. (Massive's own Benzinga earnings partnership endpoint was
+  tried first but returned `NOT_AUTHORIZED` on this account's plan.) Yahoo's endpoint is
+  unofficial and unauthenticated — it could change, rate-limit, or start requiring an auth
+  "crumb" without notice — so a failure here just means earnings rows are absent from Upcoming
+  Catalysts rather than breaking the page (see Troubleshooting).
 - **Historical reactions cover macro events only** (FOMC/CPI/jobs reports), not past earnings —
   there's no verified *historical* earnings-date source wired up, and hardcoding past dates
   without a reliable feed risks showing stale or wrong dates. Upcoming earnings dates don't carry
@@ -190,20 +193,19 @@ excludes it.
   Custom Bars responses via `next_url` regardless of the requested `limit`; `getCustomBars`
   follows pagination automatically, so if you see this, check you're not calling the endpoint
   directly outside the app's client.
-- **No Earnings rows in Upcoming Catalysts, no error shown** — expected if the current Massive
-  plan doesn't include the Benzinga earnings partnership add-on (`getUpcomingEarningsDates` in
-  `lib/massive.ts` swallows that failure and returns an empty list rather than erroring). To
-  confirm, test the endpoint directly:
+- **No Earnings rows in Upcoming Catalysts, no error shown** — `getNextEarningsDateYahoo` in
+  `lib/catalysts.ts` swallows any failure from Yahoo's endpoint and returns `null` rather than
+  erroring, by design. To check what Yahoo is actually returning, test directly:
   ```bash
-  curl "https://api.massive.com/benzinga/v1/earnings?ticker=AAPL&date.gte=2026-01-01&date.lte=2026-12-31&apiKey=YOUR_KEY"
+  curl -A "Mozilla/5.0" "https://query1.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=calendarEvents"
   ```
-  A 401/403 confirms it's a plan/entitlement gap. Note the exact query parameter names
-  (`date.gte`/`date.lte`) and response field names weren't independently verified against
-  Massive's docs (the docs site blocks automated fetches) — if the endpoint responds but no
-  earnings show up, the response shape may differ from what `lib/massive.ts` expects; share the
-  raw JSON and it can be adjusted.
+  If that 403s/999s or comes back empty, Yahoo is blocking the request (rate limit, or it now
+  requires an auth "crumb") — share the raw response and the fetch logic can be adjusted
+  accordingly. If it returns real data but the app still shows no earnings rows, the JSON shape
+  may have drifted from what `lib/catalysts.ts` expects (it reads
+  `quoteSummary.result[0].calendarEvents.earnings.earningsDate[].raw`).
 
-Note: this app calls Massive's **Stocks** Custom Bars endpoint plus the **Benzinga earnings**
-partnership endpoint — it does not use Massive's Options or Indices data (VIX and the Dollar
-Index come from FRED instead, see above). Stocks Custom Bars only needs Stocks Starter; the
-Benzinga earnings endpoint may be a separate add-on depending on your plan (see above).
+Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
+price/volume data, plus Yahoo Finance's public `quoteSummary` endpoint for upcoming earnings
+dates (free, unofficial, no Massive entitlement involved) — it does not use Massive's Options or
+Indices data (VIX and the Dollar Index come from FRED instead, see above).
