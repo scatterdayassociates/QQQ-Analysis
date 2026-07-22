@@ -120,10 +120,12 @@ export default function OvernightGapPanel() {
         not a routine weekend/holiday) and are excluded from the weekday/catalyst averages above,
         though still shown in the ranked list. <strong>FOMC/CPI/NFP</strong> tags come from the
         same hardcoded, source-verified macro calendar used on the Catalyst Tracker tab.{" "}
-        <strong>Earnings</strong> tags come from Finnhub&apos;s free-tier Earnings Calendar,
-        matched only when a report was after-market-close the prior day or before-market-open the
-        gap day (reports during market hours, or with unlisted timing, aren&apos;t tagged, since
-        they don&apos;t map cleanly to an overnight window) —{" "}
+        <strong>Earnings</strong> tags come from Finnhub&apos;s free-tier Earnings Calendar —
+        every known report date for a tracked ticker is surfaced, not just ones with clear
+        before-open/after-close timing. Reports after the prior day&apos;s close or before the gap
+        day&apos;s open get a precise AMC/BMO label since those cleanly explain <em>this specific</em>{" "}
+        overnight move; reports during market hours or with unlisted timing are still tagged, on
+        the report day itself, just without asserting which overnight window they drove —{" "}
         {data?.earningsCoverageFrom
           ? `and only available back to ${data.earningsCoverageFrom}, Finnhub's free-tier historical depth limit as observed live, well short of the full price-history range above.`
           : "currently unavailable (FINNHUB_API_KEY missing or the lookup failed), in which case gaps still show, just without Earnings tags."}

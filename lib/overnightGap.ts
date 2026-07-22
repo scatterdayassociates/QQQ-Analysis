@@ -178,14 +178,20 @@ export async function getOvernightGapData(from: string, to: string): Promise<Ove
       if (earningsForTicker) {
         const prevHour = earningsForTicker.get(prevDate);
         const currHour = earningsForTicker.get(dDate);
-        // Only AMC-the-day-before or BMO-the-day-of actually drive THIS
-        // overnight gap — "dmh" (during market hours) or unknown timing
-        // don't map cleanly to a close-to-open window, so they're left
-        // untagged rather than guessed at.
+        // AMC-the-day-before or BMO-the-day-of are the two cases that
+        // cleanly explain THIS specific overnight gap, so they get a
+        // precise label. Every other known earnings date for a tracked
+        // ticker — "dmh" (during market hours), or timing Finnhub didn't
+        // list — still gets surfaced as a catalyst (on the report day
+        // itself) rather than silently dropped, since the report is real
+        // even if it doesn't map cleanly to this one close-to-open window.
         if (prevHour === "amc") {
           tags.push({ type: "Earnings", label: `${t.ticker} Earnings (AMC ${prevDate})` });
         } else if (currHour === "bmo") {
           tags.push({ type: "Earnings", label: `${t.ticker} Earnings (BMO ${dDate})` });
+        } else if (currHour !== undefined) {
+          const timingNote = currHour === "dmh" ? "during market hours" : "timing unlisted";
+          tags.push({ type: "Earnings", label: `${t.ticker} Earnings (${dDate}, ${timingNote})` });
         }
       }
 
