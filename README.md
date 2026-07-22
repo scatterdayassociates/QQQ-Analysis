@@ -205,15 +205,25 @@ excludes it.
   Custom Bars responses via `next_url` regardless of the requested `limit`; `getCustomBars`
   follows pagination automatically, so if you see this, check you're not calling the endpoint
   directly outside the app's client.
-- **No Earnings rows in Upcoming Catalysts, no error shown** — most likely `FINNHUB_API_KEY`
-  isn't set (`getUpcomingEarningsMap` in `lib/catalysts.ts` returns an empty map immediately if
-  it's missing, by design). If it is set, test the endpoint directly:
-  ```bash
-  curl "https://finnhub.io/api/v1/calendar/earnings?from=2026-07-21&to=2026-10-19&token=YOUR_FINNHUB_KEY"
-  ```
-  A 401 means the key is wrong; an empty `earningsCalendar` array for that window is possible if
-  none of the top-10 tickers report in the next ~90 days (unlikely, but not impossible depending
-  on where in the quarterly cycle "today" falls).
+- **No Earnings rows in Upcoming Catalysts, no error shown** — the page never surfaces this as an
+  error by design (missing/failed earnings lookup just omits those rows), so check **Vercel →
+  your project → Logs**, filter to the `/api/catalysts` function, and look for a `[catalysts]`
+  line — `getUpcomingEarningsMap` in `lib/catalysts.ts` now logs exactly why it returned nothing
+  (key missing, Finnhub's HTTP status + response body, or a thrown error). Common causes:
+  - `FINNHUB_API_KEY` isn't set for the environment actually serving the request (Production vs.
+    Preview are separate — check both, and confirm you redeployed *after* adding it).
+  - A trailing space/newline pasted into the Vercel env var value — this passes a manual `curl`
+    test (where you type/paste the key cleanly) but 401s inside the app. The code now trims the
+    value defensively, but re-copying the key in Vercel is still worth doing if logs show a 401.
+  - Test the endpoint directly to confirm the key and data are good on Finnhub's side:
+    ```bash
+    curl "https://finnhub.io/api/v1/calendar/earnings?from=2026-07-21&to=2026-10-19&token=YOUR_FINNHUB_KEY"
+    ```
+    A 401 means the key itself is wrong; an empty `earningsCalendar` array for that window is
+    possible if none of the top-10 tickers report in the next ~90 days.
+  - You can also hit the deployed app's own `/api/catalysts` route directly in a browser and check
+    the `upcoming` array in the raw JSON for any `"eventType":"Earnings"` entries — this tells you
+    whether the problem is server-side (fix via the logs above) or a frontend rendering issue.
 
 Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
 price/volume data, plus Finnhub's free-tier Earnings Calendar API for upcoming earnings dates

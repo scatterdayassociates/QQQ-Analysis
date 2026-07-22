@@ -55,8 +55,12 @@ interface FinnhubEarningsCalendarResponse {
  * won't appear in Upcoming Catalysts.
  */
 async function getUpcomingEarningsMap(tickers: string[], from: string, to: string): Promise<Map<string, string>> {
-  const apiKey = process.env.FINNHUB_API_KEY;
-  if (!apiKey) return new Map();
+  const rawKey = process.env.FINNHUB_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    console.error("[catalysts] FINNHUB_API_KEY is not set — skipping earnings lookup.");
+    return new Map();
+  }
 
   try {
     const url = new URL("https://finnhub.io/api/v1/calendar/earnings");
@@ -64,7 +68,11 @@ async function getUpcomingEarningsMap(tickers: string[], from: string, to: strin
     url.searchParams.set("to", to);
     url.searchParams.set("token", apiKey);
     const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
-    if (!res.ok) return new Map();
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[catalysts] Finnhub earnings request failed: ${res.status} ${body.slice(0, 300)}`);
+      return new Map();
+    }
 
     const data = (await res.json()) as FinnhubEarningsCalendarResponse;
     const wanted = new Set(tickers);
@@ -74,8 +82,12 @@ async function getUpcomingEarningsMap(tickers: string[], from: string, to: strin
       const existing = earliestByTicker.get(entry.symbol);
       if (!existing || entry.date < existing) earliestByTicker.set(entry.symbol, entry.date);
     }
+    console.error(
+      `[catalysts] Finnhub returned ${data.earningsCalendar?.length ?? 0} total entries, ${earliestByTicker.size} matched top-10 tickers.`
+    );
     return earliestByTicker;
-  } catch {
+  } catch (err) {
+    console.error(`[catalysts] Finnhub earnings lookup threw: ${err instanceof Error ? err.message : String(err)}`);
     return new Map();
   }
 }
