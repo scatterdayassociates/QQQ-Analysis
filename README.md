@@ -87,7 +87,7 @@ Replicates the intent of the source "Catalyst100" app: a top-10 Nasdaq-100 compo
 tickers actually moved close-to-close around past macro events), and an upcoming-catalysts
 calendar.
 
-- The **top-10 list** (NVDA, AAPL, MSFT, AMZN, GOOGL, AVGO, META, TSLA, COST, NFLX) is a fixed
+- The **top-10 list** (NVDA, AAPL, MSFT, AMZN, GOOGL, AVGO, META, TSLA, MU, AMD) is a fixed
   snapshot of Nasdaq-100/QQQ weightings as of mid-2026 — QQQ's weights drift with price and the
   index rebalances quarterly, so this is "as of," not a live, continuously-rebalanced ranking.
   Re-verify periodically against Invesco's live QQQ holdings page.
@@ -99,18 +99,26 @@ calendar.
   app's placeholder-style calendar.
 - **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
   unavailable on the current plan, rather than failing the whole table.
-- **Upcoming earnings** for each top-10 ticker come from [Finnhub's](https://finnhub.io) free-tier
-  Earnings Calendar API — officially documented and intended for exactly this use case. Requires
-  a free account and a `FINNHUB_API_KEY` (see setup below); without one, Upcoming Catalysts just
-  won't show Earnings rows, everything else keeps working. Fetched once per load for the whole
-  lookahead window (not per-ticker) and filtered down to the top 10 here.
-  Two free, no-signup alternatives were tried and rejected first: Massive's own Benzinga earnings
-  endpoint (`NOT_AUTHORIZED` on this account's plan) and Yahoo Finance's public `quoteSummary`
-  endpoint (now requires a session cookie + anti-bot "crumb" token) — see git history for both.
+- **Upcoming earnings** for each top-10 ticker come from [Alpha Vantage's](https://www.alphavantage.co)
+  free `EARNINGS_CALENDAR` endpoint — officially documented, free-tier accessible, returns CSV
+  (not JSON, unlike most Alpha Vantage endpoints). Requires a free account and an
+  `ALPHA_VANTAGE_API_KEY` (see setup below); without one, Upcoming Catalysts just won't show
+  Earnings rows, everything else keeps working. Fetched once per load for the whole market (no
+  per-ticker calls) and filtered down to the top 10 here.
+  Three alternatives were tried and rejected or superseded first: Massive's own Benzinga earnings
+  endpoint (`NOT_AUTHORIZED` on this account's plan, and a paid $99/mo add-on regardless — see
+  [massive.com/partners/benzinga](https://massive.com/partners/benzinga)), Yahoo Finance's public
+  `quoteSummary` endpoint (requires a session cookie + anti-bot "crumb" token), and Finnhub's
+  free-tier calendar (confirmed live to have real coverage gaps for several top-10 tickers'
+  current-quarter dates, e.g. GOOGL/TSLA/MSFT/META missing for a window where AAPL/AMZN were
+  present) — see git history for all three. Finnhub is still used elsewhere, for the Overnight
+  Gap view's historical earnings tags (see below), since Alpha Vantage's calendar has no
+  historical mode and no before-open/after-close timing field.
 - **Historical reactions cover macro events only** (FOMC/CPI/jobs reports), not past earnings —
-  there's no verified *historical* earnings-date source wired up, and hardcoding past dates
-  without a reliable feed risks showing stale or wrong dates. Upcoming earnings dates don't carry
-  that risk since they're fetched live.
+  there's no verified *historical* earnings-date source wired up in this file specifically, and
+  hardcoding past dates without a reliable feed risks showing stale or wrong dates. Upcoming
+  earnings dates don't carry that risk since they're fetched live. (The Overnight Gap view under
+  Intraday Daypart does tag historical earnings, via Finnhub — see its own section below.)
 
 No charting library, no CSS framework — just React, plain CSS, and hand-rolled SVG (a combo
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
@@ -163,14 +171,22 @@ Edit `.env.local` and set your key:
 MASSIVE_API_KEY=your_massive_api_key_here
 ```
 
-Optional: for Earnings rows on the Catalyst Tracker tab, sign up free at
-https://finnhub.io/register, copy your API key from the dashboard, and add:
+Optional: for Earnings rows on the Catalyst Tracker tab's Upcoming Catalysts table, sign up free
+at https://www.alphavantage.co/support/#api-key, copy your API key, and add:
+
+```
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
+```
+
+Optional: for historical Earnings tags on the Overnight Gap view (under Intraday Daypart), sign
+up free at https://finnhub.io/register, copy your API key from the dashboard, and add:
 
 ```
 FINNHUB_API_KEY=your_finnhub_api_key_here
 ```
 
-The app works fine without it — Upcoming Catalysts just won't show Earnings rows.
+The app works fine without either — Upcoming Catalysts just won't show Earnings rows, and
+Overnight Gap just won't tag historical earnings dates.
 
 Then run the dev server:
 
@@ -209,8 +225,10 @@ excludes it.
 2. **Add New… → Project** → import `scatterdayassociates/QQQ-Analysis`. Vercel auto-detects Next.js.
 3. Before deploying, expand **Environment Variables** and add:
    - `MASSIVE_API_KEY` = your Massive key (apply to Production, Preview, and Development).
-   - `FINNHUB_API_KEY` = your free Finnhub key, optional (see above) — only needed for Earnings
-     rows on the Catalyst Tracker tab.
+   - `ALPHA_VANTAGE_API_KEY` = your free Alpha Vantage key, optional (see above) — only needed
+     for Earnings rows on the Catalyst Tracker tab.
+   - `FINNHUB_API_KEY` = your free Finnhub key, optional (see above) — only needed for
+     historical Earnings tags on the Overnight Gap view.
 4. Click **Deploy**.
 5. After any change to an environment variable, you must **Deployments → ⋯ → Redeploy** —
    Vercel does not retroactively inject new env vars into an already-running deployment.
@@ -245,28 +263,38 @@ excludes it.
   error by design (missing/failed earnings lookup just omits those rows), so check **Vercel →
   your project → Logs**, filter to the `/api/catalysts` function, and look for a `[catalysts]`
   line — `getUpcomingEarningsMap` in `lib/catalysts.ts` now logs exactly why it returned nothing
-  (key missing, Finnhub's HTTP status + response body, or a thrown error). Common causes:
-  - `FINNHUB_API_KEY` isn't set for the environment actually serving the request (Production vs.
-    Preview are separate — check both, and confirm you redeployed *after* adding it).
-  - A trailing space/newline pasted into the Vercel env var value — this passes a manual `curl`
-    test (where you type/paste the key cleanly) but 401s inside the app. The code now trims the
-    value defensively, but re-copying the key in Vercel is still worth doing if logs show a 401.
-  - Test the endpoint directly to confirm the key and data are good on Finnhub's side:
+  (key missing, Alpha Vantage's HTTP status + response body, a rate-limit/non-CSV response, or a
+  thrown error). Common causes:
+  - `ALPHA_VANTAGE_API_KEY` isn't set for the environment actually serving the request (Production
+    vs. Preview are separate — check both, and confirm you redeployed *after* adding it).
+  - Alpha Vantage's free tier is rate-limited (a handful of requests per minute, and a daily cap —
+    the exact numbers have changed over time, check your account dashboard). A rate-limited
+    request comes back as a 200 with a plain "Information"/"Thank you for using Alpha Vantage"
+    message instead of CSV rows; the log line calls this out explicitly rather than silently
+    parsing it as empty data.
+  - Test the endpoint directly to confirm the key and data are good on Alpha Vantage's side:
     ```bash
-    curl "https://finnhub.io/api/v1/calendar/earnings?from=2026-07-21&to=2026-10-19&token=YOUR_FINNHUB_KEY"
+    curl "https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=YOUR_ALPHA_VANTAGE_KEY"
     ```
-    A 401 means the key itself is wrong; an empty `earningsCalendar` array for that window is
-    possible if none of the top-10 tickers report in the next ~90 days.
+    This returns CSV, not JSON — the first line is the header row
+    (`symbol,name,reportDate,fiscalDateEnding,estimate,currency`). If GOOGL/TSLA/MSFT/META
+    genuinely aren't in the output for the current quarter, that's Alpha Vantage's own coverage at
+    that moment, not a bug here.
   - You can also hit the deployed app's own `/api/catalysts` route directly in a browser and check
     the `upcoming` array in the raw JSON for any `"eventType":"Earnings"` entries — this tells you
     whether the problem is server-side (fix via the logs above) or a frontend rendering issue.
+- **No Earnings tags on Overnight Gap** — separate feature, separate source. Check the
+  `/api/overnight-gap` function's logs for a `[overnight-gap]` line instead — see that view's
+  troubleshooting notes; it uses `FINNHUB_API_KEY`, not Alpha Vantage.
 
 Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
-price/volume data, plus Finnhub's free-tier Earnings Calendar API for upcoming earnings dates
-(a separate free account, no Massive entitlement involved) — it does not use Massive's Options or
+price/volume data, plus Alpha Vantage's free `EARNINGS_CALENDAR` endpoint for upcoming earnings
+dates and Finnhub's free-tier calendar for Overnight Gap's historical earnings tags (two separate
+free accounts, no Massive entitlement involved for either) — it does not use Massive's Options or
 Indices data (VIX and the Dollar Index come from FRED instead, see above).
 
 **Cost/rate-limit note for Overnight Gap**: this view fetches daily bars for 12 tickers (QQQ,
 TQQQ, top 10) over the ~240-day lookback — same Stocks Starter entitlement already used
-elsewhere, no new plan tier. It also makes one additional Finnhub call (historical earnings,
-separate from Catalyst Tracker's upcoming-earnings call) — same free API key, no extra signup.
+elsewhere, no new plan tier. It also makes one Finnhub call (historical earnings, unrelated to
+Catalyst Tracker's Alpha Vantage-based upcoming-earnings call) — same free API key already set up
+for that, no extra signup.

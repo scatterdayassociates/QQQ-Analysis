@@ -11,83 +11,133 @@
 //     real-time.
 //   - Historical reactions cover macro events only (FOMC, CPI, Jobs
 //     Report) — there's no verified historical-earnings-date source wired
-//     up, and hardcoding past earnings dates without a reliable feed risks
-//     the stale/wrong-date problem this rebuild has otherwise avoided.
-//     Upcoming Catalysts, however, does include each top-10 ticker's next
-//     scheduled earnings date, pulled live from Finnhub's free-tier
-//     Earnings Calendar endpoint (see getUpcomingEarningsMap below) — a
-//     real-time lookup, not a hardcoded guess, so it doesn't carry the
-//     same staleness risk. Two earlier free options were tried and
-//     rejected first: Massive's own Benzinga earnings endpoint
-//     (NOT_AUTHORIZED on this account's plan) and Yahoo Finance's public
-//     quoteSummary endpoint (now requires a session cookie + "crumb" token
-//     Yahoo issues to block automated access) — see git history.
+//     up here, and hardcoding past earnings dates without a reliable feed
+//     risks the stale/wrong-date problem this rebuild has otherwise
+//     avoided. (The Overnight Gap view under the Intraday Daypart tab does
+//     tag historical earnings dates, via Finnhub — see lib/overnightGap.ts
+//     — since that feature specifically needs the before-open/after-close
+//     timing Alpha Vantage's calendar doesn't provide; kept separate from
+//     this file's upcoming-earnings lookup rather than unifying the two.)
+//   - Upcoming Catalysts includes each top-10 ticker's next scheduled
+//     earnings date, pulled live from Alpha Vantage's free EARNINGS_CALENDAR
+//     endpoint (see getUpcomingEarningsMap below) — a real-time lookup, not
+//     a hardcoded guess. Three earlier options were tried and rejected or
+//     superseded first: Massive's own Benzinga earnings endpoint
+//     (NOT_AUTHORIZED on this account's plan, and a paid $99/mo add-on
+//     regardless), Yahoo Finance's public quoteSummary endpoint (requires a
+//     session cookie + "crumb" token Yahoo issues to block automated
+//     access), and Finnhub's free-tier calendar (confirmed live to have
+//     real coverage gaps for several top-10 tickers' current-quarter
+//     dates — see git history for all three).
 //
 // This file must only ever be imported from server code: it reads equity
-// data through lib/massive.ts (secret MASSIVE_API_KEY) and, for earnings,
-// reads the secret FINNHUB_API_KEY directly.
+// data through lib/massive.ts (secret MASSIVE_API_KEY) and, for upcoming
+// earnings, reads the secret ALPHA_VANTAGE_API_KEY directly.
 
 import { getCustomBars, getTickerMarketCap } from "./massive";
 
-interface FinnhubEarningsEntry {
-  date?: string;
-  symbol?: string;
+// Minimal CSV row parser respecting quoted fields (Alpha Vantage quotes any
+// company name containing a comma, e.g. "AutoNation, Inc."), since a naive
+// split(",") would misalign columns for those rows.
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      cells.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur);
+  return cells;
 }
 
-interface FinnhubEarningsCalendarResponse {
-  earningsCalendar?: FinnhubEarningsEntry[];
-}
+type EarningsHorizon = "3month" | "6month" | "12month";
 
 /**
- * Finnhub's free-tier Earnings Calendar endpoint
- * (https://finnhub.io/docs/api/earnings-calendar) — officially documented
- * and intended for exactly this use case, unlike the Yahoo/Benzinga
- * attempts before it. Requires a free API key (finnhub.io signup) set as
- * FINNHUB_API_KEY. Fetched once for the whole date range (the endpoint
- * returns all companies reporting in that window, not just one ticker),
- * then filtered down to the top-10 tickers here — cheaper than a
- * per-ticker call and avoids depending on the endpoint's optional (and
- * unverified) `symbol` filter parameter.
+ * Alpha Vantage's free EARNINGS_CALENDAR endpoint
+ * (https://www.alphavantage.co/documentation/#earnings-calendar) —
+ * officially documented, free-tier accessible, and returns CSV (not JSON,
+ * unlike most Alpha Vantage endpoints): symbol,name,reportDate,
+ * fiscalDateEnding,estimate,currency. No `symbol` filter is passed here —
+ * fetched once for the whole market (same cost either way on this
+ * endpoint) and filtered down to the top-10 tickers below, same
+ * single-call-then-filter pattern used elsewhere in this file.
+ *
+ * Note: this endpoint has no before-open/after-close ("hour") field and no
+ * historical/past-date mode (`horizon` only accepts 3month/6month/12month
+ * forward-looking windows) — fine for Upcoming Catalysts, which only needs
+ * a date, but not usable for Overnight Gap's historical earnings tagging
+ * (that stays on Finnhub, see lib/overnightGap.ts).
  *
  * Returns a ticker -> earliest upcoming earnings date map. Missing key or
  * any fetch failure degrades to an empty map rather than a fatal error,
  * same as the other optional lookups in this file — earnings rows just
  * won't appear in Upcoming Catalysts.
  */
-async function getUpcomingEarningsMap(tickers: string[], from: string, to: string): Promise<Map<string, string>> {
-  const rawKey = process.env.FINNHUB_API_KEY;
+async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizon = "3month"): Promise<Map<string, string>> {
+  const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
   if (!apiKey) {
-    console.error("[catalysts] FINNHUB_API_KEY is not set — skipping earnings lookup.");
+    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping earnings lookup.");
     return new Map();
   }
 
   try {
-    const url = new URL("https://finnhub.io/api/v1/calendar/earnings");
-    url.searchParams.set("from", from);
-    url.searchParams.set("to", to);
-    url.searchParams.set("token", apiKey);
+    const url = new URL("https://www.alphavantage.co/query");
+    url.searchParams.set("function", "EARNINGS_CALENDAR");
+    url.searchParams.set("horizon", horizon);
+    url.searchParams.set("apikey", apiKey);
     const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(`[catalysts] Finnhub earnings request failed: ${res.status} ${body.slice(0, 300)}`);
+      console.error(`[catalysts] Alpha Vantage earnings request failed: ${res.status} ${body.slice(0, 300)}`);
       return new Map();
     }
 
-    const data = (await res.json()) as FinnhubEarningsCalendarResponse;
+    const csvText = await res.text();
+    // Alpha Vantage returns a 200 with a plain-text "Information"/rate-limit
+    // notice (no CSV header) when a key is invalid or the daily quota is
+    // exhausted — detect that rather than trying to parse it as CSV rows.
+    if (!csvText.includes("symbol") || csvText.trim().startsWith("{")) {
+      console.error(`[catalysts] Alpha Vantage returned a non-CSV response (likely rate-limited or bad key): ${csvText.slice(0, 300)}`);
+      return new Map();
+    }
+
+    const lines = csvText.trim().split("\n");
     const wanted = new Set(tickers);
     const earliestByTicker = new Map<string, string>();
-    for (const entry of data.earningsCalendar ?? []) {
-      if (!entry.symbol || !entry.date || !wanted.has(entry.symbol)) continue;
-      const existing = earliestByTicker.get(entry.symbol);
-      if (!existing || entry.date < existing) earliestByTicker.set(entry.symbol, entry.date);
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCsvLine(lines[i]);
+      const symbol = cols[0]?.trim();
+      const reportDate = cols[2]?.trim();
+      if (!symbol || !reportDate || !wanted.has(symbol)) continue;
+      const existing = earliestByTicker.get(symbol);
+      if (!existing || reportDate < existing) earliestByTicker.set(symbol, reportDate);
     }
     console.error(
-      `[catalysts] Finnhub returned ${data.earningsCalendar?.length ?? 0} total entries, ${earliestByTicker.size} matched top-10 tickers.`
+      `[catalysts] Alpha Vantage returned ${lines.length - 1} total rows, ${earliestByTicker.size} matched top-10 tickers.`
     );
     return earliestByTicker;
   } catch (err) {
-    console.error(`[catalysts] Finnhub earnings lookup threw: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`[catalysts] Alpha Vantage earnings lookup threw: ${err instanceof Error ? err.message : String(err)}`);
     return new Map();
   }
 }
@@ -106,8 +156,8 @@ export const TOP_10: { ticker: string; name: string }[] = [
   { ticker: "AVGO", name: "Broadcom Inc." },
   { ticker: "META", name: "Meta Platforms, Inc." },
   { ticker: "TSLA", name: "Tesla, Inc." },
-  { ticker: "COST", name: "Costco Wholesale Corporation" },
-  { ticker: "NFLX", name: "Netflix, Inc." },
+  { ticker: "MU", name: "Micron Technology, Inc." },
+  { ticker: "AMD", name: "Advanced Micro Devices, Inc." },
 ];
 
 export type EventType = "FOMC" | "CPI" | "NFP" | "Earnings";
@@ -207,7 +257,7 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
-    getUpcomingEarningsMap(tickers, todayStr, earningsWindowEndStr),
+    getUpcomingEarningsMap(tickers, "3month"),
   ]);
 
   const oneDayMs = 24 * 60 * 60 * 1000;

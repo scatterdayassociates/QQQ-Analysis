@@ -215,21 +215,24 @@ export default function CatalystPanel() {
 
       <p className="footnote">
         <strong>Methodology.</strong> The top-10 list (NVDA, AAPL, MSFT, AMZN, GOOGL, AVGO, META, TSLA,
-        COST, NFLX) reflects Nasdaq-100/QQQ weightings as of mid-2026 — it&apos;s a fixed snapshot, not a
+        MU, AMD) reflects Nasdaq-100/QQQ weightings as of mid-2026 — it&apos;s a fixed snapshot, not a
         continuously-rebalanced live ranking, since weights drift with price and the index rebalances
         quarterly. Price, change, and volume come from Massive&apos;s Custom Bars endpoint; market cap
         comes from Massive&apos;s Ticker Details (reference) endpoint and shows “—” if unavailable on the
         current plan. <strong>Days Till Earnings</strong> is each ticker&apos;s next scheduled report
-        date (from Finnhub, same source as Upcoming Catalysts) minus today&apos;s date, and shows “—”
-        if no report is scheduled within the lookahead window or Finnhub isn&apos;t configured. The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled
+        date (from Alpha Vantage, same source as Upcoming Catalysts) minus today&apos;s date, and shows
+        “—” if no report is scheduled within the lookahead window or Alpha Vantage isn&apos;t configured.
+        The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled
         from the Federal Reserve&apos;s and BLS&apos;s published schedules — historical reactions are
         computed as the real close-to-close % move from the trading day before each event to the event
         day itself, covering Jan 2026–present. <strong>Earnings</strong> in the Upcoming Catalysts table
-        is each top-10 ticker&apos;s next scheduled report, pulled live from Finnhub&apos;s free-tier
-        Earnings Calendar API — a free account and <code>FINNHUB_API_KEY</code> unlock it; without one,
-        those rows are simply absent rather than the page failing. Historical reactions don&apos;t
-        include past earnings dates, since there&apos;s no verified historical-earnings source
-        wired up here, and hardcoding those risks showing stale or wrong dates.
+        is each top-10 ticker&apos;s next scheduled report, pulled live from Alpha Vantage&apos;s free
+        EARNINGS_CALENDAR endpoint — a free account and <code>ALPHA_VANTAGE_API_KEY</code> unlock it;
+        without one, those rows are simply absent rather than the page failing. Historical reactions
+        don&apos;t include past earnings dates, since there&apos;s no verified historical-earnings
+        source wired up here, and hardcoding those risks showing stale or wrong dates. (The Overnight
+        Gap view under Intraday Daypart does show historical earnings tags, via a different source —
+        see its own methodology note.)
       </p>
     </section>
   );
