@@ -14,6 +14,7 @@ interface SummaryCell {
   weekday: string;
   catalyst: "None" | GapCatalystType;
   count: number;
+  avgSigned: number;
   avgAbs: number;
   maxAbs: number;
   dates: string[]; // YYYY-MM-DD, deduped and sorted — the actual date(s) behind this row
@@ -24,6 +25,10 @@ const MAX_DATES_SHOWN = 6;
 function formatDDMMYY(dateStr: string): string {
   const [y, m, d] = dateStr.split("-");
   return `${d}/${m}/${y.slice(2)}`;
+}
+
+function formatSignedPct(v: number): string {
+  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
 }
 
 // A date can carry multiple tags (e.g. a CPI day that's also an earnings
@@ -41,14 +46,15 @@ function dominantCatalyst(g: OvernightGap): "None" | GapCatalystType {
 
 export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) {
   const cells = useMemo<SummaryCell[]>(() => {
-    const buckets = new Map<string, { vals: number[]; dates: Set<string> }>();
+    const buckets = new Map<string, { signedVals: number[]; absVals: number[]; dates: Set<string> }>();
     for (const g of gaps) {
       if (g.flagged) continue; // exclude probable halts/data gaps from the stats
       if (!WEEKDAY_ORDER.includes(g.weekday)) continue;
       const key = `${g.weekday}|${dominantCatalyst(g)}`;
-      if (!buckets.has(key)) buckets.set(key, { vals: [], dates: new Set() });
+      if (!buckets.has(key)) buckets.set(key, { signedVals: [], absVals: [], dates: new Set() });
       const bucket = buckets.get(key)!;
-      bucket.vals.push(Math.abs(g.gapPct));
+      bucket.signedVals.push(g.gapPct);
+      bucket.absVals.push(Math.abs(g.gapPct));
       bucket.dates.add(g.date);
     }
 
@@ -56,13 +62,14 @@ export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) 
     for (const weekday of WEEKDAY_ORDER) {
       for (const catalyst of CATALYST_ORDER) {
         const bucket = buckets.get(`${weekday}|${catalyst}`);
-        if (!bucket || bucket.vals.length === 0) continue;
+        if (!bucket || bucket.absVals.length === 0) continue;
         result.push({
           weekday,
           catalyst,
-          count: bucket.vals.length,
-          avgAbs: bucket.vals.reduce((a, b) => a + b, 0) / bucket.vals.length,
-          maxAbs: Math.max(...bucket.vals),
+          count: bucket.absVals.length,
+          avgSigned: bucket.signedVals.reduce((a, b) => a + b, 0) / bucket.signedVals.length,
+          avgAbs: bucket.absVals.reduce((a, b) => a + b, 0) / bucket.absVals.length,
+          maxAbs: Math.max(...bucket.absVals),
           dates: [...bucket.dates].sort(),
         });
       }
@@ -79,6 +86,7 @@ export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) 
             <th>Date(s)</th>
             <th>Catalyst</th>
             <th>N</th>
+            <th>Avg Change</th>
             <th>Avg |Gap %|</th>
             <th>Max |Gap %|</th>
           </tr>
@@ -103,13 +111,14 @@ export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) 
                 )}
               </td>
               <td>{c.count}</td>
+              <td className={c.avgSigned >= 0 ? "up" : "down"}>{formatSignedPct(c.avgSigned)}</td>
               <td>{c.avgAbs.toFixed(2)}</td>
               <td>{c.maxAbs.toFixed(2)}</td>
             </tr>
           ))}
           {cells.length === 0 && (
             <tr>
-              <td colSpan={6} className="skeleton">
+              <td colSpan={7} className="skeleton">
                 Not enough data in the current selection.
               </td>
             </tr>

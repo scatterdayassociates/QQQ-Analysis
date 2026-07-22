@@ -118,7 +118,12 @@ export default function OvernightGapPanel() {
         <strong>not</strong> the regular-session (open-to-close) move. Rows marked ⚠ span an
         unusually long calendar gap between the two bars (a possible trading halt or data gap,
         not a routine weekend/holiday) and are excluded from the weekday/catalyst averages above,
-        though still shown in the ranked list. <strong>FOMC/CPI/NFP</strong> tags come from the
+        though still shown in the ranked list. In the Weekday/Catalyst Summary,{" "}
+        <strong>Avg Change</strong> is the signed average (up and down moves can offset each
+        other, so it shows net direction/bias), while <strong>Avg |Gap %|</strong> and{" "}
+        <strong>Max |Gap %|</strong> use absolute values (so opposite-direction moves don&apos;t
+        cancel out) to show typical and largest swing size regardless of direction —
+        they answer different questions and neither replaces the other. <strong>FOMC/CPI/NFP</strong> tags come from the
         same hardcoded, source-verified macro calendar used on the Catalyst Tracker tab.{" "}
         <strong>Earnings</strong> tags come from Finnhub&apos;s free-tier Earnings Calendar —
         every known report date for a tracked ticker is surfaced, not just ones with clear
