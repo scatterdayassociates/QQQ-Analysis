@@ -160,6 +160,7 @@ export interface CatalystComponent {
   changePct: number | null;
   volume: number | null;
   marketCap: number | null;
+  daysUntilEarnings: number | null; // next scheduled earnings date minus today; null if unavailable
 }
 
 export interface CatalystReaction {
@@ -206,11 +207,16 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
     getUpcomingEarningsMap(tickers, todayStr, earningsWindowEndStr),
   ]);
 
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const todayMidnightUtc = new Date(`${todayStr}T00:00:00Z`).getTime();
+  const daysUntil = (date: string) => Math.round((new Date(`${date}T00:00:00Z`).getTime() - todayMidnightUtc) / oneDayMs);
+
   const components: CatalystComponent[] = TOP_10.map((c, i) => {
     const bars = barsByTicker[i];
     const latest = bars[bars.length - 1];
     const prev = bars.length >= 2 ? bars[bars.length - 2] : null;
     const changePct = latest && prev ? ((latest.c - prev.c) / prev.c) * 100 : null;
+    const nextEarningsDate = upcomingEarningsByTicker.get(c.ticker);
     return {
       ticker: c.ticker,
       name: c.name,
@@ -218,6 +224,7 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
       changePct,
       volume: latest?.v ?? null,
       marketCap: marketCaps[i],
+      daysUntilEarnings: nextEarningsDate ? daysUntil(nextEarningsDate) : null,
     };
   });
 
@@ -252,10 +259,6 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
     }
   }
   reactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)); // newest first
-
-  const oneDayMs = 24 * 60 * 60 * 1000;
-  const todayMidnightUtc = new Date(`${todayStr}T00:00:00Z`).getTime();
-  const daysUntil = (date: string) => Math.round((new Date(`${date}T00:00:00Z`).getTime() - todayMidnightUtc) / oneDayMs);
 
   const macroUpcoming: UpcomingCatalyst[] = MACRO_EVENTS.filter((e) => e.date > todayStr).map((e) => ({
     date: e.date,

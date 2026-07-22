@@ -29,6 +29,13 @@ function pctClass(v: number | null): string {
   return v >= 0 ? "up" : "down";
 }
 
+function formatDaysUntilEarnings(v: number | null): string {
+  if (v === null) return "—";
+  if (v === 0) return "Today";
+  if (v === 1) return "1 day";
+  return `${v} days`;
+}
+
 export default function CatalystPanel() {
   const [data, setData] = useState<CatalystTrackerData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,6 +101,7 @@ export default function CatalystPanel() {
                     <th>Change</th>
                     <th>Volume</th>
                     <th>Market Cap</th>
+                    <th>Days Till Earnings</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -105,6 +113,7 @@ export default function CatalystPanel() {
                       <td className={pctClass(c.changePct)}>{formatPct(c.changePct)}</td>
                       <td>{formatVolume(c.volume)}</td>
                       <td>{formatMarketCap(c.marketCap)}</td>
+                      <td>{formatDaysUntilEarnings(c.daysUntilEarnings)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -210,7 +219,9 @@ export default function CatalystPanel() {
         continuously-rebalanced live ranking, since weights drift with price and the index rebalances
         quarterly. Price, change, and volume come from Massive&apos;s Custom Bars endpoint; market cap
         comes from Massive&apos;s Ticker Details (reference) endpoint and shows “—” if unavailable on the
-        current plan. The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled
+        current plan. <strong>Days Till Earnings</strong> is each ticker&apos;s next scheduled report
+        date (from Finnhub, same source as Upcoming Catalysts) minus today&apos;s date, and shows “—”
+        if no report is scheduled within the lookahead window or Finnhub isn&apos;t configured. The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled
         from the Federal Reserve&apos;s and BLS&apos;s published schedules — historical reactions are
         computed as the real close-to-close % move from the trading day before each event to the event
         day itself, covering Jan 2026–present. <strong>Earnings</strong> in the Upcoming Catalysts table
