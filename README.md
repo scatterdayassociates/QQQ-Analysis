@@ -69,13 +69,14 @@ calendar.
   app's placeholder-style calendar.
 - **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
   unavailable on the current plan, rather than failing the whole table.
-- **Upcoming earnings** for each top-10 ticker come from Yahoo Finance's public `quoteSummary`
-  endpoint (`calendarEvents` module) — the same unofficial API the `yfinance` Python package
-  wraps. Free, no signup, no API key. (Massive's own Benzinga earnings partnership endpoint was
-  tried first but returned `NOT_AUTHORIZED` on this account's plan.) Yahoo's endpoint is
-  unofficial and unauthenticated — it could change, rate-limit, or start requiring an auth
-  "crumb" without notice — so a failure here just means earnings rows are absent from Upcoming
-  Catalysts rather than breaking the page (see Troubleshooting).
+- **Upcoming earnings** for each top-10 ticker come from [Finnhub's](https://finnhub.io) free-tier
+  Earnings Calendar API — officially documented and intended for exactly this use case. Requires
+  a free account and a `FINNHUB_API_KEY` (see setup below); without one, Upcoming Catalysts just
+  won't show Earnings rows, everything else keeps working. Fetched once per load for the whole
+  lookahead window (not per-ticker) and filtered down to the top 10 here.
+  Two free, no-signup alternatives were tried and rejected first: Massive's own Benzinga earnings
+  endpoint (`NOT_AUTHORIZED` on this account's plan) and Yahoo Finance's public `quoteSummary`
+  endpoint (now requires a session cookie + anti-bot "crumb" token) — see git history for both.
 - **Historical reactions cover macro events only** (FOMC/CPI/jobs reports), not past earnings —
   there's no verified *historical* earnings-date source wired up, and hardcoding past dates
   without a reliable feed risks showing stale or wrong dates. Upcoming earnings dates don't carry
@@ -126,6 +127,15 @@ Edit `.env.local` and set your key:
 MASSIVE_API_KEY=your_massive_api_key_here
 ```
 
+Optional: for Earnings rows on the Catalyst Tracker tab, sign up free at
+https://finnhub.io/register, copy your API key from the dashboard, and add:
+
+```
+FINNHUB_API_KEY=your_finnhub_api_key_here
+```
+
+The app works fine without it — Upcoming Catalysts just won't show Earnings rows.
+
 Then run the dev server:
 
 ```bash
@@ -163,6 +173,8 @@ excludes it.
 2. **Add New… → Project** → import `scatterdayassociates/QQQ-Analysis`. Vercel auto-detects Next.js.
 3. Before deploying, expand **Environment Variables** and add:
    - `MASSIVE_API_KEY` = your Massive key (apply to Production, Preview, and Development).
+   - `FINNHUB_API_KEY` = your free Finnhub key, optional (see above) — only needed for Earnings
+     rows on the Catalyst Tracker tab.
 4. Click **Deploy**.
 5. After any change to an environment variable, you must **Deployments → ⋯ → Redeploy** —
    Vercel does not retroactively inject new env vars into an already-running deployment.
@@ -193,19 +205,17 @@ excludes it.
   Custom Bars responses via `next_url` regardless of the requested `limit`; `getCustomBars`
   follows pagination automatically, so if you see this, check you're not calling the endpoint
   directly outside the app's client.
-- **No Earnings rows in Upcoming Catalysts, no error shown** — `getNextEarningsDateYahoo` in
-  `lib/catalysts.ts` swallows any failure from Yahoo's endpoint and returns `null` rather than
-  erroring, by design. To check what Yahoo is actually returning, test directly:
+- **No Earnings rows in Upcoming Catalysts, no error shown** — most likely `FINNHUB_API_KEY`
+  isn't set (`getUpcomingEarningsMap` in `lib/catalysts.ts` returns an empty map immediately if
+  it's missing, by design). If it is set, test the endpoint directly:
   ```bash
-  curl -A "Mozilla/5.0" "https://query1.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=calendarEvents"
+  curl "https://finnhub.io/api/v1/calendar/earnings?from=2026-07-21&to=2026-10-19&token=YOUR_FINNHUB_KEY"
   ```
-  If that 403s/999s or comes back empty, Yahoo is blocking the request (rate limit, or it now
-  requires an auth "crumb") — share the raw response and the fetch logic can be adjusted
-  accordingly. If it returns real data but the app still shows no earnings rows, the JSON shape
-  may have drifted from what `lib/catalysts.ts` expects (it reads
-  `quoteSummary.result[0].calendarEvents.earnings.earningsDate[].raw`).
+  A 401 means the key is wrong; an empty `earningsCalendar` array for that window is possible if
+  none of the top-10 tickers report in the next ~90 days (unlikely, but not impossible depending
+  on where in the quarterly cycle "today" falls).
 
 Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
-price/volume data, plus Yahoo Finance's public `quoteSummary` endpoint for upcoming earnings
-dates (free, unofficial, no Massive entitlement involved) — it does not use Massive's Options or
+price/volume data, plus Finnhub's free-tier Earnings Calendar API for upcoming earnings dates
+(a separate free account, no Massive entitlement involved) — it does not use Massive's Options or
 Indices data (VIX and the Dollar Index come from FRED instead, see above).

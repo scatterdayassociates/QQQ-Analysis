@@ -14,60 +14,69 @@
 //     up, and hardcoding past earnings dates without a reliable feed risks
 //     the stale/wrong-date problem this rebuild has otherwise avoided.
 //     Upcoming Catalysts, however, does include each top-10 ticker's next
-//     scheduled earnings date, pulled live from Yahoo Finance's public
-//     quoteSummary endpoint (see getNextEarningsDateYahoo below) — that's
-//     a real-time lookup, not a hardcoded guess, so it doesn't carry the
-//     same staleness risk. (Massive's own Benzinga earnings partnership
-//     endpoint was tried first but returned NOT_AUTHORIZED on the current
-//     plan — see git history for that attempt.)
+//     scheduled earnings date, pulled live from Finnhub's free-tier
+//     Earnings Calendar endpoint (see getUpcomingEarningsMap below) — a
+//     real-time lookup, not a hardcoded guess, so it doesn't carry the
+//     same staleness risk. Two earlier free options were tried and
+//     rejected first: Massive's own Benzinga earnings endpoint
+//     (NOT_AUTHORIZED on this account's plan) and Yahoo Finance's public
+//     quoteSummary endpoint (now requires a session cookie + "crumb" token
+//     Yahoo issues to block automated access) — see git history.
 //
-// This file must only ever be imported from server code, since it reads
-// equity data through lib/massive.ts (which reads the secret
-// MASSIVE_API_KEY).
+// This file must only ever be imported from server code: it reads equity
+// data through lib/massive.ts (secret MASSIVE_API_KEY) and, for earnings,
+// reads the secret FINNHUB_API_KEY directly.
 
 import { getCustomBars, getTickerMarketCap } from "./massive";
 
-interface YahooCalendarEventsResponse {
-  quoteSummary?: {
-    result?: Array<{
-      calendarEvents?: {
-        earnings?: {
-          earningsDate?: Array<{ raw?: number }>;
-        };
-      };
-    }>;
-  };
+interface FinnhubEarningsEntry {
+  date?: string;
+  symbol?: string;
+}
+
+interface FinnhubEarningsCalendarResponse {
+  earningsCalendar?: FinnhubEarningsEntry[];
 }
 
 /**
- * Yahoo Finance's public quoteSummary endpoint — the same undocumented API
- * the `yfinance` Python package wraps. Free, no signup, no API key. Unlike
- * Massive's Benzinga earnings endpoint (rejected as NOT_AUTHORIZED on this
- * account's plan), Yahoo's endpoint doesn't require any subscription — but
- * it's unofficial and can change, add rate limits, or start requiring an
- * auth "crumb" without notice, so failures here are treated as "no
- * earnings date available" rather than fatal, same as getTickerMarketCap.
+ * Finnhub's free-tier Earnings Calendar endpoint
+ * (https://finnhub.io/docs/api/earnings-calendar) — officially documented
+ * and intended for exactly this use case, unlike the Yahoo/Benzinga
+ * attempts before it. Requires a free API key (finnhub.io signup) set as
+ * FINNHUB_API_KEY. Fetched once for the whole date range (the endpoint
+ * returns all companies reporting in that window, not just one ticker),
+ * then filtered down to the top-10 tickers here — cheaper than a
+ * per-ticker call and avoids depending on the endpoint's optional (and
+ * unverified) `symbol` filter parameter.
+ *
+ * Returns a ticker -> earliest upcoming earnings date map. Missing key or
+ * any fetch failure degrades to an empty map rather than a fatal error,
+ * same as the other optional lookups in this file — earnings rows just
+ * won't appear in Upcoming Catalysts.
  */
-async function getNextEarningsDateYahoo(ticker: string): Promise<string | null> {
+async function getUpcomingEarningsMap(tickers: string[], from: string, to: string): Promise<Map<string, string>> {
+  const apiKey = process.env.FINNHUB_API_KEY;
+  if (!apiKey) return new Map();
+
   try {
-    const url = new URL(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}`);
-    url.searchParams.set("modules", "calendarEvents");
-    const res = await fetch(url.toString(), {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        Accept: "application/json",
-      },
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as YahooCalendarEventsResponse;
-    const dates = data.quoteSummary?.result?.[0]?.calendarEvents?.earnings?.earningsDate ?? [];
-    const withRaw = dates.find((d) => typeof d.raw === "number");
-    if (!withRaw || typeof withRaw.raw !== "number") return null;
-    return new Date(withRaw.raw * 1000).toISOString().slice(0, 10);
+    const url = new URL("https://finnhub.io/api/v1/calendar/earnings");
+    url.searchParams.set("from", from);
+    url.searchParams.set("to", to);
+    url.searchParams.set("token", apiKey);
+    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+    if (!res.ok) return new Map();
+
+    const data = (await res.json()) as FinnhubEarningsCalendarResponse;
+    const wanted = new Set(tickers);
+    const earliestByTicker = new Map<string, string>();
+    for (const entry of data.earningsCalendar ?? []) {
+      if (!entry.symbol || !entry.date || !wanted.has(entry.symbol)) continue;
+      const existing = earliestByTicker.get(entry.symbol);
+      if (!existing || entry.date < existing) earliestByTicker.set(entry.symbol, entry.date);
+    }
+    return earliestByTicker;
   } catch {
-    return null;
+    return new Map();
   }
 }
 
@@ -175,12 +184,14 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   earningsWindowEnd.setDate(earningsWindowEnd.getDate() + EARNINGS_LOOKAHEAD_DAYS);
   const earningsWindowEndStr = toDateStr(earningsWindowEnd);
 
-  const [barsByTicker, marketCaps, nextEarningsByTicker] = await Promise.all([
+  const tickers = TOP_10.map((c) => c.ticker);
+
+  const [barsByTicker, marketCaps, upcomingEarningsByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
-    Promise.all(TOP_10.map((c) => getNextEarningsDateYahoo(c.ticker))),
+    getUpcomingEarningsMap(tickers, todayStr, earningsWindowEndStr),
   ]);
 
   const components: CatalystComponent[] = TOP_10.map((c, i) => {
@@ -243,8 +254,8 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   }));
 
   const earningsUpcoming: UpcomingCatalyst[] = [];
-  TOP_10.forEach((c, i) => {
-    const date = nextEarningsByTicker[i];
+  TOP_10.forEach((c) => {
+    const date = upcomingEarningsByTicker.get(c.ticker);
     if (date && date > todayStr && date <= earningsWindowEndStr) {
       earningsUpcoming.push({
         date,
