@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CatalystTrackerData, CatalystReaction } from "@/lib/catalysts";
 
-const EVENT_TYPES = ["FOMC", "CPI", "NFP"] as const;
+const EVENT_TYPES = ["FOMC", "CPI", "NFP", "Earnings"] as const;
 
 function formatVolume(v: number | null): string {
   if (v === null) return "—";
@@ -223,16 +223,22 @@ export default function CatalystPanel() {
         date (from Alpha Vantage, same source as Upcoming Catalysts) minus today&apos;s date, and shows
         “—” if no report is scheduled within the lookahead window or Alpha Vantage isn&apos;t configured.
         The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled
-        from the Federal Reserve&apos;s and BLS&apos;s published schedules — historical reactions are
-        computed as the real close-to-close % move from the trading day before each event to the event
-        day itself, covering Jan 2026–present. <strong>Earnings</strong> in the Upcoming Catalysts table
-        is each top-10 ticker&apos;s next scheduled report, pulled live from Alpha Vantage&apos;s free
-        EARNINGS_CALENDAR endpoint — a free account and <code>ALPHA_VANTAGE_API_KEY</code> unlock it;
-        without one, those rows are simply absent rather than the page failing. Historical reactions
-        don&apos;t include past earnings dates, since there&apos;s no verified historical-earnings
-        source wired up here, and hardcoding those risks showing stale or wrong dates. (The Overnight
-        Gap view under Intraday Daypart does show historical earnings tags, via a different source —
-        see its own methodology note.)
+        from the Federal Reserve&apos;s and BLS&apos;s published schedules — historical reactions to
+        those are computed as the real close-to-close % move from the trading day before each event
+        to the event day itself, covering Jan 2026–present. <strong>Earnings</strong> rows in
+        Historical 1-Day Reactions use the same close-to-close calculation, applied to each top-10
+        ticker&apos;s own historical report dates — pulled live from Alpha Vantage&apos;s
+        <code>EARNINGS</code> endpoint (a different one from <code>EARNINGS_CALENDAR</code>, since
+        only this one carries genuine multi-year historical dates; one request per ticker rather
+        than a single market-wide call, so it uses more of the free tier&apos;s daily quota).
+        <strong>Earnings</strong> in the Upcoming Catalysts table is each top-10 ticker&apos;s next
+        scheduled report, pulled from <code>EARNINGS_CALENDAR</code> instead — a free account and
+        <code>ALPHA_VANTAGE_API_KEY</code> unlock both; without one, Earnings rows are simply absent
+        rather than the page failing. Neither Alpha Vantage endpoint distinguishes before-open vs.
+        after-close timing, so earnings reactions here are close-to-close over the report day
+        itself, same as the macro rows. (The Overnight Gap view under Intraday Daypart does
+        distinguish that timing for its own earnings tags, via a different source — see its own
+        methodology note.)
       </p>
     </section>
   );

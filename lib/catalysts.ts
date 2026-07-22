@@ -9,26 +9,24 @@
 //     continuously-rebalanced weighting — QQQ/NDX weights drift with price
 //     and quarterly rebalances, so treat the ranking as "as of" rather than
 //     real-time.
-//   - Historical reactions cover macro events only (FOMC, CPI, Jobs
-//     Report) — there's no verified historical-earnings-date source wired
-//     up here, and hardcoding past earnings dates without a reliable feed
-//     risks the stale/wrong-date problem this rebuild has otherwise
-//     avoided. (The Overnight Gap view under the Intraday Daypart tab does
-//     tag historical earnings dates, via Finnhub — see lib/overnightGap.ts
-//     — since that feature specifically needs the before-open/after-close
-//     timing Alpha Vantage's calendar doesn't provide; kept separate from
-//     this file's upcoming-earnings lookup rather than unifying the two.)
+//   - Historical reactions cover both macro events (FOMC, CPI, Jobs
+//     Report) and each top-10 ticker's own historical earnings dates —
+//     see getHistoricalEarningsDatesByTicker below (Alpha Vantage's
+//     EARNINGS endpoint, a different one from EARNINGS_CALENDAR, and the
+//     only one of the three sources considered with genuine multi-year
+//     historical report dates). Benzinga (NOT_AUTHORIZED on this account's
+//     plan, and a paid $99/mo add-on regardless) and Finnhub (its free
+//     tier's historical calendar only reaches back ~1 month, confirmed
+//     live) were both ruled out for this specific need — Finnhub is still
+//     used for Overnight Gap's historical earnings tags (see
+//     lib/overnightGap.ts) since that feature needs the before-open/
+//     after-close timing this file's Alpha Vantage sources don't provide,
+//     and a ~1-month window is less of a gap there than it would be for a
+//     "Jan 2026–present" reactions table.
 //   - Upcoming Catalysts includes each top-10 ticker's next scheduled
 //     earnings date, pulled live from Alpha Vantage's free EARNINGS_CALENDAR
 //     endpoint (see getUpcomingEarningsMap below) — a real-time lookup, not
-//     a hardcoded guess. Three earlier options were tried and rejected or
-//     superseded first: Massive's own Benzinga earnings endpoint
-//     (NOT_AUTHORIZED on this account's plan, and a paid $99/mo add-on
-//     regardless), Yahoo Finance's public quoteSummary endpoint (requires a
-//     session cookie + "crumb" token Yahoo issues to block automated
-//     access), and Finnhub's free-tier calendar (confirmed live to have
-//     real coverage gaps for several top-10 tickers' current-quarter
-//     dates — see git history for all three).
+//     a hardcoded guess.
 //
 // This file must only ever be imported from server code: it reads equity
 // data through lib/massive.ts (secret MASSIVE_API_KEY) and, for upcoming
@@ -142,6 +140,81 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
   }
 }
 
+interface AlphaVantageQuarterlyEarning {
+  fiscalDateEnding?: string;
+  reportedDate?: string;
+}
+
+interface AlphaVantageEarningsResponse {
+  symbol?: string;
+  quarterlyEarnings?: AlphaVantageQuarterlyEarning[];
+  Information?: string;
+  Note?: string;
+}
+
+/**
+ * Alpha Vantage's EARNINGS endpoint (function=EARNINGS&symbol=X) — a
+ * different endpoint from EARNINGS_CALENDAR above, since only this one
+ * carries genuine multi-year historical `reportedDate` values per quarter.
+ * No bulk/all-companies mode though (unlike EARNINGS_CALENDAR) — one call
+ * per ticker, so covering all 10 tracked tickers costs 10 requests, not 1.
+ * Powers Historical 1-Day Reactions' Earnings rows, the same way
+ * MACRO_EVENTS powers the FOMC/CPI/NFP rows below. No before-open/
+ * after-close field here either, so reactions are computed close-to-close
+ * over the report date itself — the same convention already used for
+ * macro events, which also don't distinguish intraday timing.
+ *
+ * Cached for 6 hours (`revalidate: 21600`, longer than the 1-hour used
+ * for the single-call endpoint above) since this spends a much larger
+ * share of the free tier's daily quota per fetch; a failed or
+ * rate-limited ticker just contributes no historical earnings reactions
+ * rather than breaking the others.
+ */
+async function getHistoricalEarningsDatesByTicker(tickers: string[], from: string, to: string): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping historical earnings reactions.");
+    return result;
+  }
+
+  await Promise.all(
+    tickers.map(async (ticker) => {
+      try {
+        const url = new URL("https://www.alphavantage.co/query");
+        url.searchParams.set("function", "EARNINGS");
+        url.searchParams.set("symbol", ticker);
+        url.searchParams.set("apikey", apiKey);
+        const res = await fetch(url.toString(), { next: { revalidate: 21600 } });
+        if (!res.ok) {
+          console.error(`[catalysts] Alpha Vantage EARNINGS request failed for ${ticker}: ${res.status}`);
+          return;
+        }
+        const data = (await res.json()) as AlphaVantageEarningsResponse;
+        if (data.Information || data.Note) {
+          console.error(
+            `[catalysts] Alpha Vantage EARNINGS rate-limited/errored for ${ticker}: ${(data.Information || data.Note || "").slice(0, 200)}`
+          );
+          return;
+        }
+        const dates = (data.quarterlyEarnings ?? [])
+          .map((q) => q.reportedDate)
+          .filter((d): d is string => !!d && d >= from && d <= to);
+        if (dates.length > 0) result.set(ticker, dates);
+      } catch (err) {
+        console.error(`[catalysts] Alpha Vantage EARNINGS lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })
+  );
+
+  const totalDates = [...result.values()].reduce((sum, d) => sum + d.length, 0);
+  console.error(
+    `[catalysts] Alpha Vantage historical earnings: ${result.size}/${tickers.length} tickers returned data, ${totalDates} report dates in range.`
+  );
+  return result;
+}
+
 // Top 10 Nasdaq-100 (QQQ) holdings by weight, as of mid-2026. Weights drift
 // with price and the index rebalances quarterly, so re-verify this list
 // periodically rather than treating it as permanent. Exported so the
@@ -252,12 +325,13 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  const [barsByTicker, marketCaps, upcomingEarningsByTicker] = await Promise.all([
+  const [barsByTicker, marketCaps, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
     getUpcomingEarningsMap(tickers, "3month"),
+    getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr),
   ]);
 
   const oneDayMs = 24 * 60 * 60 * 1000;
@@ -311,6 +385,25 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
       });
     }
   }
+  for (const c of TOP_10) {
+    const earningsDates = historicalEarningsByTicker.get(c.ticker) ?? [];
+    const dates = sortedDatesByTicker[c.ticker];
+    for (const eDate of earningsDates) {
+      if (eDate > todayStr) continue; // future reports are "upcoming", handled above
+      const idx = dates.indexOf(eDate);
+      if (idx <= 0) continue; // no bar that day, or no prior trading day to compare against
+      const eventClose = closesByTicker[c.ticker].get(dates[idx])!;
+      const priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
+      reactions.push({
+        ticker: c.ticker,
+        eventType: "Earnings",
+        eventLabel: `${c.ticker} Earnings`,
+        date: eDate,
+        reactionPct: ((eventClose - priorClose) / priorClose) * 100,
+      });
+    }
+  }
+
   reactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)); // newest first
 
   const macroUpcoming: UpcomingCatalyst[] = MACRO_EVENTS.filter((e) => e.date > todayStr).map((e) => ({

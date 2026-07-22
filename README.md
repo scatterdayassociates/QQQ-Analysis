@@ -84,16 +84,16 @@ data source wired up here to keep one current.
 
 Replicates the intent of the source "Catalyst100" app: a top-10 Nasdaq-100 components table
 (price, change, volume, market cap), a historical 1-day reactions table (how each of those 10
-tickers actually moved close-to-close around past macro events), and an upcoming-catalysts
-calendar.
+tickers actually moved close-to-close around past macro events *and* their own historical
+earnings dates), and an upcoming-catalysts calendar.
 
 - The **top-10 list** (NVDA, AAPL, MSFT, AMZN, GOOGL, AVGO, META, TSLA, MU, AMD) is a fixed
   snapshot of Nasdaq-100/QQQ weightings as of mid-2026 — QQQ's weights drift with price and the
   index rebalances quarterly, so this is "as of," not a live, continuously-rebalanced ranking.
   Re-verify periodically against Invesco's live QQQ holdings page.
-- **Reactions are real, computed values** — the close price the trading day before each macro
-  event vs. the close on the event day itself, from Massive's Custom Bars, not fabricated
-  numbers. Covers Jan 2026–present.
+- **Reactions are real, computed values** — the close price the trading day before each
+  event/report vs. the close on the event/report day itself, from Massive's Custom Bars, not
+  fabricated numbers. Covers Jan 2026–present.
 - The **macro calendar** (FOMC rate decisions, CPI releases, jobs reports) is hardcoded from the
   Federal Reserve's and BLS's published 2026 schedules — real, verified dates, not the source
   app's placeholder-style calendar.
@@ -114,11 +114,19 @@ calendar.
   present) — see git history for all three. Finnhub is still used elsewhere, for the Overnight
   Gap view's historical earnings tags (see below), since Alpha Vantage's calendar has no
   historical mode and no before-open/after-close timing field.
-- **Historical reactions cover macro events only** (FOMC/CPI/jobs reports), not past earnings —
-  there's no verified *historical* earnings-date source wired up in this file specifically, and
-  hardcoding past dates without a reliable feed risks showing stale or wrong dates. Upcoming
-  earnings dates don't carry that risk since they're fetched live. (The Overnight Gap view under
-  Intraday Daypart does tag historical earnings, via Finnhub — see its own section below.)
+- **Historical reactions cover macro events (FOMC/CPI/jobs reports) and each top-10 ticker's own
+  historical earnings dates.** Earnings reaction dates come from Alpha Vantage's `EARNINGS`
+  endpoint — a *different* endpoint from `EARNINGS_CALENDAR` above, since only this one carries
+  genuine multi-year historical `reportedDate` values. Unlike `EARNINGS_CALENDAR`, it has no
+  bulk/all-companies mode — one request per ticker, so populating all 10 costs 10 calls against
+  the free tier's daily quota, not 1. Cached for 6 hours (vs. 1 hour for the single-call
+  endpoint) to limit repeat spend. Neither Alpha Vantage endpoint distinguishes before-open vs.
+  after-close timing, so earnings reactions are close-to-close over the report day itself, same
+  as the macro rows. Benzinga (`NOT_AUTHORIZED`, $99/mo add-on) and Finnhub (free-tier historical
+  depth only reaches ~1 month back, confirmed live) were both considered and ruled out for this
+  specific "Jan 2026–present" need — Finnhub is still used for Overnight Gap's historical earnings
+  tags (see its own section below), where a ~1-month window is less of a gap and the
+  before-open/after-close distinction actually matters.
 
 No charting library, no CSS framework — just React, plain CSS, and hand-rolled SVG (a combo
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
@@ -286,12 +294,33 @@ excludes it.
 - **No Earnings tags on Overnight Gap** — separate feature, separate source. Check the
   `/api/overnight-gap` function's logs for a `[overnight-gap]` line instead — see that view's
   troubleshooting notes; it uses `FINNHUB_API_KEY`, not Alpha Vantage.
+- **No Earnings rows in Historical 1-Day Reactions** — check the `/api/catalysts` logs for a
+  `[catalysts] Alpha Vantage historical earnings: N/10 tickers returned data, ...` line. Since
+  this makes 10 separate requests (one per ticker, no bulk mode), individual tickers can fail
+  independently — a rate-limited or errored ticker just contributes zero historical reactions
+  rather than breaking the others, so `N` may legitimately be less than 10 even with a working
+  key, especially on a quota-constrained free tier. Test one ticker directly:
+  ```bash
+  curl "https://www.alphavantage.co/query?function=EARNINGS&symbol=NVDA&apikey=YOUR_ALPHA_VANTAGE_KEY"
+  ```
+  Look for a top-level `"Information"` or `"Note"` field in the JSON — that's Alpha Vantage's
+  rate-limit/quota message, not real data, and the app's logs call this out per-ticker rather
+  than silently treating it as "no earnings."
 
 Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
-price/volume data, plus Alpha Vantage's free `EARNINGS_CALENDAR` endpoint for upcoming earnings
-dates and Finnhub's free-tier calendar for Overnight Gap's historical earnings tags (two separate
-free accounts, no Massive entitlement involved for either) — it does not use Massive's Options or
-Indices data (VIX and the Dollar Index come from FRED instead, see above).
+price/volume data, plus Alpha Vantage's free `EARNINGS_CALENDAR` and `EARNINGS` endpoints for
+upcoming and historical earnings dates on Catalyst Tracker, and Finnhub's free-tier calendar for
+Overnight Gap's historical earnings tags (two separate free accounts, no Massive entitlement
+involved for either) — it does not use Massive's Options or Indices data (VIX and the Dollar
+Index come from FRED instead, see above).
+
+**Cost/rate-limit note for Catalyst Tracker's historical earnings**: unlike every other external
+call in this app (one request covering all tracked tickers), Alpha Vantage's `EARNINGS` endpoint
+has no bulk mode — populating Historical 1-Day Reactions' Earnings rows costs **10 separate
+requests** (one per top-10 ticker) against the free tier's daily quota, on top of the 1 call
+`EARNINGS_CALENDAR` already uses for Upcoming Catalysts. Cached for 6 hours specifically to limit
+how often that's re-spent. If you're watching quota closely, this is the most expensive external
+call this app makes.
 
 **Cost/rate-limit note for Overnight Gap**: this view fetches daily bars for 12 tickers (QQQ,
 TQQQ, top 10) over the ~240-day lookback — same Stocks Starter entitlement already used
