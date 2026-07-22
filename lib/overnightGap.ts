@@ -88,7 +88,7 @@ async function getHistoricalEarningsMap(tickers: string[], from: string, to: str
       }
       if (!entry.symbol || !entry.date || !wanted.has(entry.symbol)) continue;
       if (!byTickerDate.has(entry.symbol)) byTickerDate.set(entry.symbol, new Map());
-      byTickerDate.get(entry.symbol)!.set(entry.date, entry.hour ?? "");
+      byTickerDate.get(entry.symbol)!.set(entry.date, (entry.hour ?? "").trim().toLowerCase());
     }
 
     console.error(
@@ -199,6 +199,11 @@ export async function getOvernightGapData(from: string, to: string): Promise<Ove
       });
     }
   });
+
+  const earningsTagCount = gaps.filter((g) => g.tags.some((t) => t.type === "Earnings")).length;
+  console.error(
+    `[overnight-gap] ${gaps.length} total gap rows computed; ${earningsTagCount} carry an Earnings tag; Finnhub earnings map covers ${earningsResult.byTickerDate.size} tickers with data.`
+  );
 
   return {
     asOf: toDateStr(new Date()),

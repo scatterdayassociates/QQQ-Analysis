@@ -473,6 +473,13 @@ tbody tr.flagged td {
   background: color-mix(in srgb, var(--accent-vol) 8%, transparent);
 }
 
+td.gap-summary-dates {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.76rem;
+  white-space: normal;
+}
+
 /* ---------- cards ---------- */
 
 .card {

@@ -16,6 +16,14 @@ interface SummaryCell {
   count: number;
   avgAbs: number;
   maxAbs: number;
+  dates: string[]; // YYYY-MM-DD, deduped and sorted — the actual date(s) behind this row
+}
+
+const MAX_DATES_SHOWN = 6;
+
+function formatDDMMYY(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-");
+  return `${d}/${m}/${y.slice(2)}`;
 }
 
 // A date can carry multiple tags (e.g. a CPI day that's also an earnings
@@ -33,26 +41,29 @@ function dominantCatalyst(g: OvernightGap): "None" | GapCatalystType {
 
 export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) {
   const cells = useMemo<SummaryCell[]>(() => {
-    const buckets = new Map<string, number[]>();
+    const buckets = new Map<string, { vals: number[]; dates: Set<string> }>();
     for (const g of gaps) {
       if (g.flagged) continue; // exclude probable halts/data gaps from the stats
       if (!WEEKDAY_ORDER.includes(g.weekday)) continue;
       const key = `${g.weekday}|${dominantCatalyst(g)}`;
-      if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key)!.push(Math.abs(g.gapPct));
+      if (!buckets.has(key)) buckets.set(key, { vals: [], dates: new Set() });
+      const bucket = buckets.get(key)!;
+      bucket.vals.push(Math.abs(g.gapPct));
+      bucket.dates.add(g.date);
     }
 
     const result: SummaryCell[] = [];
     for (const weekday of WEEKDAY_ORDER) {
       for (const catalyst of CATALYST_ORDER) {
-        const vals = buckets.get(`${weekday}|${catalyst}`) ?? [];
-        if (vals.length === 0) continue;
+        const bucket = buckets.get(`${weekday}|${catalyst}`);
+        if (!bucket || bucket.vals.length === 0) continue;
         result.push({
           weekday,
           catalyst,
-          count: vals.length,
-          avgAbs: vals.reduce((a, b) => a + b, 0) / vals.length,
-          maxAbs: Math.max(...vals),
+          count: bucket.vals.length,
+          avgAbs: bucket.vals.reduce((a, b) => a + b, 0) / bucket.vals.length,
+          maxAbs: Math.max(...bucket.vals),
+          dates: [...bucket.dates].sort(),
         });
       }
     }
@@ -65,6 +76,7 @@ export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) 
         <thead>
           <tr>
             <th>Weekday</th>
+            <th>Date(s)</th>
             <th>Catalyst</th>
             <th>N</th>
             <th>Avg |Gap %|</th>
@@ -75,6 +87,14 @@ export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) 
           {cells.map((c, i) => (
             <tr key={i}>
               <td>{c.weekday.slice(0, 3)}</td>
+              <td className="gap-summary-dates">
+                {c.dates.length > MAX_DATES_SHOWN
+                  ? `${c.dates
+                      .slice(0, MAX_DATES_SHOWN)
+                      .map(formatDDMMYY)
+                      .join(", ")} +${c.dates.length - MAX_DATES_SHOWN} more`
+                  : c.dates.map(formatDDMMYY).join(", ")}
+              </td>
               <td>
                 {c.catalyst !== "None" ? (
                   <span className={`event-chip event-${c.catalyst.toLowerCase()}`}>{c.catalyst}</span>
@@ -89,7 +109,7 @@ export default function OvernightGapSummary({ gaps }: OvernightGapSummaryProps) 
           ))}
           {cells.length === 0 && (
             <tr>
-              <td colSpan={5} className="skeleton">
+              <td colSpan={6} className="skeleton">
                 Not enough data in the current selection.
               </td>
             </tr>
