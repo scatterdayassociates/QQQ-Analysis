@@ -322,6 +322,157 @@ button.apply:disabled {
   font-size: 0.78rem;
 }
 
+/* ---------- daypart sub-nav (Volume & Volatility / Overnight Gap) ---------- */
+
+.daypart-subnav {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.3rem;
+}
+
+.daypart-subnav-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.daypart-subnav-btn:hover {
+  color: var(--text);
+}
+
+.daypart-subnav-btn.active {
+  background: color-mix(in srgb, var(--focus) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--focus) 45%, var(--border));
+  color: var(--focus);
+}
+
+/* ---------- overnight gap calendar ---------- */
+
+.gap-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  max-width: 320px;
+}
+
+.gap-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gap-calendar-title {
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.gap-calendar-nav {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.gap-calendar-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gap-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.gap-calendar-weekday {
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--muted-2);
+  font-weight: 650;
+  padding-bottom: 0.2rem;
+}
+
+.gap-calendar-cell {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.gap-calendar-cell.empty {
+  background: none;
+  cursor: default;
+}
+
+.gap-calendar-cell:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.gap-calendar-cell:not(:disabled):not(.empty):hover {
+  border-color: var(--focus);
+}
+
+.gap-calendar-cell.selected {
+  background: color-mix(in srgb, var(--focus) 30%, var(--surface-2));
+  border-color: var(--focus);
+  font-weight: 650;
+}
+
+.gap-calendar-dot {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-earnings);
+}
+
+.gap-calendar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.gap-calendar-hint {
+  color: var(--muted-2);
+  font-size: 0.74rem;
+}
+
+/* ---------- sortable table headers, flagged rows (overnight gap) ---------- */
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  color: var(--text);
+}
+
+tbody tr.flagged td {
+  background: color-mix(in srgb, var(--accent-vol) 8%, transparent);
+}
+
 /* ---------- cards ---------- */
 
 .card {

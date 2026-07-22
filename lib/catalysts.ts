@@ -94,8 +94,10 @@ async function getUpcomingEarningsMap(tickers: string[], from: string, to: strin
 
 // Top 10 Nasdaq-100 (QQQ) holdings by weight, as of mid-2026. Weights drift
 // with price and the index rebalances quarterly, so re-verify this list
-// periodically rather than treating it as permanent.
-const TOP_10: { ticker: string; name: string }[] = [
+// periodically rather than treating it as permanent. Exported so the
+// Overnight Gap feature (lib/overnightGap.ts) can reuse the same list
+// instead of maintaining a second copy.
+export const TOP_10: { ticker: string; name: string }[] = [
   { ticker: "NVDA", name: "NVIDIA Corporation" },
   { ticker: "AAPL", name: "Apple Inc." },
   { ticker: "MSFT", name: "Microsoft Corporation" },
@@ -108,9 +110,9 @@ const TOP_10: { ticker: string; name: string }[] = [
   { ticker: "NFLX", name: "Netflix, Inc." },
 ];
 
-type EventType = "FOMC" | "CPI" | "NFP" | "Earnings";
+export type EventType = "FOMC" | "CPI" | "NFP" | "Earnings";
 
-interface MacroEvent {
+export interface MacroEvent {
   date: string; // YYYY-MM-DD
   type: EventType;
   label: string;
@@ -119,8 +121,9 @@ interface MacroEvent {
 // Sourced from federalreserve.gov (FOMC) and bls.gov release schedules
 // (CPI, Employment Situation). FOMC dates are the announcement day (2nd
 // day of the 2-day meeting); CPI/NFP dates are each release's actual
-// publication day, not the reference month.
-const MACRO_EVENTS: MacroEvent[] = [
+// publication day, not the reference month. Exported for reuse by the
+// Overnight Gap feature (lib/overnightGap.ts).
+export const MACRO_EVENTS: MacroEvent[] = [
   { date: "2026-01-28", type: "FOMC", label: "FOMC Rate Decision" },
   { date: "2026-03-18", type: "FOMC", label: "FOMC Rate Decision" },
   { date: "2026-04-29", type: "FOMC", label: "FOMC Rate Decision" },

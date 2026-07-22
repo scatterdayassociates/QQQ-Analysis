@@ -27,6 +27,36 @@ free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inp
 - **Compare up to 5 dates at once** — the **+ Add date range** button appends another
   independent chart/table block (its own date, time range, and fetch) stacked below the
   current one, so you can eyeball, say, an earnings day against a normal day side by side.
+- A sub-nav inside this tab switches to the **Overnight Gap** view (see below) — same tab,
+  additive, doesn't touch the volume/volatility view above.
+
+### Overnight Gap (inside Intraday Daypart)
+
+- **Definition**: for trading day D, overnight gap % = `(Open[D] − Close[D-1]) / Close[D-1]`,
+  where `Close[D-1]` is the prior trading day's 4:00 PM ET regular-session close and `Open[D]`
+  is day D's 9:30 AM ET regular-session open — both read from Massive's daily Custom Bars.
+  Confirmed live against Massive's dedicated Daily Open/Close endpoint (which separately labels
+  `preMarket`/`afterHours`) that the daily aggregate's own `o`/`c` fields are already these exact
+  regular-session values, not extended-hours prints — no separate endpoint call needed. This is
+  deliberately **not** the regular-session (open-to-close) move.
+- Covers **QQQ, TQQQ, and the same top-10 Nasdaq-100 components** used on Catalyst Tracker, over
+  the same ~240-day lookback.
+- **Catalyst tags**: FOMC/CPI/NFP dates reuse the same hardcoded macro calendar as Catalyst
+  Tracker. Earnings tags come from Finnhub's free-tier Earnings Calendar, matched only when a
+  report was after-market-close the prior day or before-market-open the gap day (reports during
+  market hours, or with unlisted timing, aren't tagged — they don't map cleanly to an overnight
+  window). **Finnhub's free tier silently truncates historical depth** to roughly the trailing
+  month regardless of the date range requested — verified live — so Earnings tags on Overnight
+  Gap only appear for recent dates; the UI discloses the actual cutoff it observed. FOMC/CPI/NFP
+  tags aren't affected, since that calendar is hardcoded.
+- Pairs spanning an unusually long calendar gap between two consecutive bars (a possible trading
+  halt or data gap, not a routine weekend/holiday) are flagged (⚠) rather than silently averaged
+  in — they're excluded from the weekday/catalyst summary stats but still shown in the ranked list.
+- **Ranked table**: sortable by date, ticker, or gap %, defaulting to largest positive gap at
+  top. **Weekday/catalyst summary**: average and max |gap %| grouped by weekday and dominant
+  catalyst type. **Calendar picker**: click individual dates or shift-click to select a range;
+  catalyst-tagged dates show a dot. Both the ranked table and summary scope to the current
+  ticker filter and date selection.
 
 ## Tab 2: Fundamental Analysis
 
@@ -95,21 +125,27 @@ app/
   api/daypart/route.ts        server route: daypart tab, calls Massive, keeps the API key secret
   api/fundamentals/route.ts   server route: fundamentals tab, calls Massive + FRED
   api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive
+  api/overnight-gap/route.ts  server route: overnight gap view, calls Massive + Finnhub
 lib/massive.ts               Massive API client (server-only) + Parkinson volatility calc
 lib/fundamentals.ts          7-metric scoring model + tactical decision logic (server-only)
 lib/catalysts.ts             top-10 list + macro calendar + 1-day reaction calc (server-only)
+lib/overnightGap.ts          close-to-open gap calc + catalyst tagging, reuses catalysts.ts's list/calendar
 components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker)
-components/DaypartPanel.tsx       manages the list of date-range entries (up to 5) + the add/remove UI
+components/DaypartPanel.tsx       manages the list of date-range entries (up to 5), the add/remove UI, and the sub-nav to Overnight Gap
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
 components/DaypartTable.tsx       same data as an exact-value table, synced hover with the chart
+components/OvernightGapPanel.tsx  ticker filter, calendar picker, weekday summary, and ranked table for the gap view
+components/GapCalendarPicker.tsx  dependency-free multi-select/range calendar, flags catalyst-tagged dates
+components/OvernightGapSummary.tsx  weekday x catalyst-type aggregate (avg/max |gap %|)
+components/OvernightGapTable.tsx  sortable ranked gap table
 components/FundamentalAnalysisPanel.tsx  tactical decision card, gauge, and the 7 metric cards
 components/StrengthGauge.tsx      dependency-free SVG semicircle gauge
 components/CatalystPanel.tsx      top-10 table, reactions table (with filters), upcoming-catalysts table
 ```
 
 The Massive API key is **only ever read server-side** (inside `lib/massive.ts`, used by all
-three API routes). It is never sent to the browser. FRED's CSV endpoint is public and needs no
+four API routes). It is never sent to the browser. FRED's CSV endpoint is public and needs no
 key.
 
 ## 1. Local setup
@@ -229,3 +265,8 @@ Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter t
 price/volume data, plus Finnhub's free-tier Earnings Calendar API for upcoming earnings dates
 (a separate free account, no Massive entitlement involved) — it does not use Massive's Options or
 Indices data (VIX and the Dollar Index come from FRED instead, see above).
+
+**Cost/rate-limit note for Overnight Gap**: this view fetches daily bars for 12 tickers (QQQ,
+TQQQ, top 10) over the ~240-day lookback — same Stocks Starter entitlement already used
+elsewhere, no new plan tier. It also makes one additional Finnhub call (historical earnings,
+separate from Catalyst Tracker's upcoming-earnings call) — same free API key, no extra signup.
