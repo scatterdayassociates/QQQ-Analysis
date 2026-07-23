@@ -70,6 +70,14 @@ body {
   margin: 0 0 0.4rem;
 }
 
+.site-title {
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 1.5rem;
+  text-wrap: balance;
+}
+
 .page-header {
   display: flex;
   align-items: flex-start;
