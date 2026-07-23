@@ -158,10 +158,19 @@ infrastructure spend from operating cash flow or increasingly from debt/equity i
   longer than anywhere else) since quarterly fundamentals only change 4x/year. A rate-limited or
   missing ticker just drops out of the table rather than failing the page; check Vercel logs for
   `[ai-earnings]` lines to see exactly how many tickers came through.
-- **Options cross-reference** (implied vs. realized earnings-day move, from the reference
-  implementation) is not yet wired in — it needs Massive's **Options** product line (a different
-  subscription from the Stocks data the rest of this app uses), and is being verified live before
-  being added.
+- **Options Richness** (optional, computed only when an expiration date is entered in the tab):
+  compares the options market's *implied* move into a given expiration against each ticker's own
+  trailing *realized* earnings-day moves. **Implied Move** = ATM straddle price ÷ spot, from
+  Massive's Options Chain Snapshot (`/v3/snapshot/options/{ticker}`) — this requires a separate
+  Massive **Options** product subscription from the Stocks data the rest of this app uses, now
+  confirmed live. The live response has no `last_quote`/bid-ask field at all; `day.close` (last
+  traded price) is the only price used for each contract. **Avg Realized |Move|** = average
+  absolute close-to-close move over the ticker's trailing 12 quarters of earnings report dates
+  (Alpha Vantage `EARNINGS` + Massive daily bars, same pattern as Catalyst Tracker's historical
+  reactions). **Richness** = Implied Move ÷ Avg Realized |Move| — above 1.0x means the market is
+  pricing in a bigger move than history suggests. Adds up to 1 options-snapshot request + 1
+  Alpha Vantage `EARNINGS` request per ticker (6 more of each per load) only when an expiration is
+  supplied; omitting it skips this section and its extra calls entirely.
 
 No charting library, no CSS framework — just React, plain CSS, and hand-rolled SVG (a combo
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the

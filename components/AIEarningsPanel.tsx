@@ -1,13 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { AiEarningsData, AiEarningsScore } from "@/lib/aiEarnings";
+import type { AiEarningsData, AiEarningsScore, OptionsRichness } from "@/lib/aiEarnings";
 
 const TIER_LABELS: Record<1 | 2 | 3, string> = {
   1: "Hyperscaler",
   2: "Leveraged Buyer",
   3: "Credit-Risk Tail",
 };
+
+function richnessClass(v: number | null): string {
+  if (v === null) return "";
+  return v >= 1 ? "up" : "down"; // >=1 = options pricing a bigger move than history — highlighted, not good/bad
+}
 
 function fmtRatio(v: number | null): string {
   return v === null ? "—" : v.toFixed(2);
@@ -40,12 +45,16 @@ export default function AIEarningsPanel() {
   const [data, setData] = useState<AiEarningsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expiration, setExpiration] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (expirationParam: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/ai-earnings");
+      const url = expirationParam
+        ? `/api/ai-earnings?expiration=${encodeURIComponent(expirationParam)}`
+        : "/api/ai-earnings";
+      const res = await fetch(url);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load AI earnings analysis");
       setData(json as AiEarningsData);
@@ -58,8 +67,9 @@ export default function AIEarningsPanel() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    load(expiration);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <section>
@@ -71,8 +81,24 @@ export default function AIEarningsPanel() {
             operating cash flow, or increasingly from debt and equity issuance?
           </p>
         </div>
-        <button className="apply" onClick={load} disabled={loading}>
+        <button className="apply" onClick={() => load(expiration)} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+
+      <div className="toolbar">
+        <div className="field">
+          <label htmlFor="ai-earnings-expiration">Options expiration (optional)</label>
+          <input
+            id="ai-earnings-expiration"
+            type="date"
+            className="mono"
+            value={expiration}
+            onChange={(e) => setExpiration(e.target.value)}
+          />
+        </div>
+        <button className="apply" onClick={() => load(expiration)} disabled={loading}>
+          Load Options Richness
         </button>
       </div>
 
@@ -135,6 +161,55 @@ export default function AIEarningsPanel() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {data?.optionsRichness && (
+        <div className="card">
+          <div className="chart-label">Options Richness vs. Historical Earnings Moves ({expiration})</div>
+          <div className="table-wrap">
+            <table className="mono">
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Spot</th>
+                  <th>ATM Strike</th>
+                  <th>Straddle</th>
+                  <th>Implied Move</th>
+                  <th>Avg Realized |Move|</th>
+                  <th># Reports</th>
+                  <th>Richness</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.optionsRichness.map((r: OptionsRichness) => (
+                  <tr key={r.ticker}>
+                    <td>{r.ticker}</td>
+                    <td>{r.straddle ? `$${r.straddle.spotPrice.toFixed(2)}` : "—"}</td>
+                    <td>{r.straddle ? `$${r.straddle.atmStrike.toFixed(2)}` : "—"}</td>
+                    <td>{r.straddle?.straddlePrice != null ? `$${r.straddle.straddlePrice.toFixed(2)}` : "—"}</td>
+                    <td>{fmtPct(r.straddle?.impliedMovePct ?? null)}</td>
+                    <td>{fmtPct(r.avgRealizedAbsMovePct)}</td>
+                    <td>{r.historicalMoveCount}</td>
+                    <td className={richnessClass(r.richnessRatio)}>{fmtRatio(r.richnessRatio)}x</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="footnote">
+            <strong>Options Richness.</strong> Pulled live from Massive&apos;s Options Chain Snapshot
+            (<code>/v3/snapshot/options/&#123;ticker&#125;</code>, requires a Massive Options-tier
+            subscription) using the strike closest to spot for the chosen expiration.{" "}
+            <strong>Implied Move</strong> = (ATM call + ATM put <code>day.close</code>) ÷ spot price —
+            the options market&apos;s straddle-implied move by that expiration; the live snapshot has
+            no <code>last_quote</code>/bid-ask field, so <code>day.close</code> (last traded price) is
+            the only price used. <strong>Avg Realized |Move|</strong> = average absolute close-to-close
+            move on this ticker&apos;s own trailing 12 quarters of historical earnings report dates
+            (Alpha Vantage <code>EARNINGS</code> + Massive daily bars). <strong>Richness</strong>{" "}
+            = Implied Move ÷ Avg Realized |Move| — above 1.0x means the market is pricing in a bigger
+            move than this ticker has historically delivered on earnings.
+          </p>
         </div>
       )}
 

@@ -123,6 +123,69 @@ export async function getTickerMarketCap(ticker: string): Promise<number | null>
   }
 }
 
+export interface OptionContractSnapshot {
+  day: {
+    close: number;
+    open?: number;
+    high?: number;
+    low?: number;
+    vwap?: number;
+    volume?: number;
+  };
+  details: {
+    contract_type: "call" | "put";
+    exercise_style?: string;
+    expiration_date: string; // YYYY-MM-DD
+    strike_price: number;
+    ticker: string; // OCC-style option contract ticker
+    shares_per_contract?: number;
+  };
+  greeks?: { delta?: number; gamma?: number; theta?: number; vega?: number };
+  implied_volatility?: number;
+  open_interest?: number;
+  underlying_asset?: { ticker: string };
+}
+
+interface OptionChainSnapshotResponse {
+  results?: OptionContractSnapshot[];
+  status: string;
+  next_url?: string;
+}
+
+/**
+ * Options Chain Snapshot endpoint.
+ * GET /v3/snapshot/options/{underlyingTicker}
+ *
+ * Confirmed live via a real curl against an active Massive Options
+ * subscription — critically, the actual response has no `last_quote`
+ * field at all (no bid/ask anywhere), unlike some third-party reference
+ * clients assume. The only price available per contract is `day.close`
+ * (plus day.open/high/low/vwap); some far-OTM/illiquid contracts also
+ * come back with an empty `greeks: {}` and no `implied_volatility`.
+ */
+export async function getOptionChainSnapshot(
+  underlyingTicker: string,
+  opts: { expirationDate?: string } = {}
+): Promise<OptionContractSnapshot[]> {
+  const params: Record<string, string> = { limit: "250" };
+  if (opts.expirationDate) params.expiration_date = opts.expirationDate;
+
+  let data = await massiveFetch<OptionChainSnapshotResponse>(
+    `/v3/snapshot/options/${encodeURIComponent(underlyingTicker)}`,
+    params
+  );
+  const results = [...(data.results ?? [])];
+
+  let pages = 0;
+  while (data.next_url && pages < MAX_PAGES) {
+    data = await fetchJson<OptionChainSnapshotResponse>(new URL(data.next_url));
+    results.push(...(data.results ?? []));
+    pages += 1;
+  }
+
+  return results;
+}
+
 const ET_TIME_ZONE = "America/New_York";
 
 const TRADING_MINUTES_PER_DAY = 390; // 9:30-4:00 ET

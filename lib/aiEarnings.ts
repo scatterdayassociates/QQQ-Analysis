@@ -19,8 +19,21 @@
 // fundamentals only change 4x/year per ticker — there's no reason to
 // re-spend quota more often than that.
 //
+// Options richness cross-reference (optional, only computed when a caller
+// passes an expiration date): compares the options market's *implied* move
+// into the next earnings report (ATM straddle price / spot, via Massive's
+// Options Chain Snapshot) against each ticker's own trailing *realized*
+// 1-day earnings-day moves (via Alpha Vantage's EARNINGS report dates +
+// Massive daily bars) — a richness ratio above 1.0 means the market is
+// pricing in a bigger move than this ticker has historically delivered.
+// Requires a Massive Options-tier subscription (confirmed live and
+// separate from the base plan's stock/aggregates access already used
+// elsewhere in this app) plus the same MASSIVE_API_KEY.
+//
 // This file must only ever be imported from server code: it reads the
 // secret ALPHA_VANTAGE_API_KEY directly.
+
+import { getCustomBars, getOptionChainSnapshot } from "./massive";
 
 const ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query";
 const FUNDAMENTALS_CACHE_SECONDS = 86_400; // 24h — fundamentals barely move intraday or even day-to-day
@@ -211,14 +224,158 @@ function zscore(values: number[], x: number | null): number | null {
   return (x - mean) / stdev;
 }
 
+function toDateStr(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+async function getSpotPrice(ticker: string): Promise<number | null> {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - 10); // pad past weekends/holidays for a guaranteed last close
+  const bars = await getCustomBars(ticker, { timespan: "day", from: toDateStr(from), to: toDateStr(to) });
+  if (bars.length === 0) return null;
+  return bars[bars.length - 1].c;
+}
+
+export interface AtmStraddle {
+  spotPrice: number;
+  atmStrike: number;
+  callPrice: number | null;
+  putPrice: number | null;
+  straddlePrice: number | null;
+  impliedMovePct: number | null; // straddlePrice / spotPrice
+}
+
+// ATM straddle price / spot, as a proxy for the options market's implied
+// move by the given expiration. Picks the single strike closest to spot and
+// sums call + put day.close (the only price field the real snapshot
+// response carries — see getOptionChainSnapshot's doc comment).
+async function computeAtmStraddle(ticker: string, expirationDate: string): Promise<AtmStraddle | null> {
+  try {
+    const [spot, chain] = await Promise.all([
+      getSpotPrice(ticker),
+      getOptionChainSnapshot(ticker, { expirationDate }),
+    ]);
+    if (spot === null || chain.length === 0) return null;
+
+    const strikes = [...new Set(chain.map((c) => c.details.strike_price))];
+    const atmStrike = strikes.reduce((best, s) => (Math.abs(s - spot) < Math.abs(best - spot) ? s : best), strikes[0]);
+
+    const callPrice = chain.find((c) => c.details.strike_price === atmStrike && c.details.contract_type === "call")?.day?.close ?? null;
+    const putPrice = chain.find((c) => c.details.strike_price === atmStrike && c.details.contract_type === "put")?.day?.close ?? null;
+    const straddlePrice = callPrice !== null && putPrice !== null ? callPrice + putPrice : null;
+    const impliedMovePct = straddlePrice !== null && spot > 0 ? straddlePrice / spot : null;
+
+    return { spotPrice: spot, atmStrike, callPrice, putPrice, straddlePrice, impliedMovePct };
+  } catch (err) {
+    console.error(`[ai-earnings] options straddle lookup failed for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+// A module-local historical-report-dates + close-to-close-reaction lookup,
+// deliberately not cross-imported from lib/catalysts.ts (this app's
+// established convention — see lib/overnightGap.ts's independent Finnhub
+// call — is per-module duplication over cross-file coupling for these
+// small, source-specific lookups). Reuses the same Alpha Vantage EARNINGS
+// endpoint and cache duration as getQuarterlyMetrics above.
+async function getHistoricalReportDates(ticker: string, numQuarters: number): Promise<string[]> {
+  const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) return [];
+
+  try {
+    const url = new URL(ALPHA_VANTAGE_BASE);
+    url.searchParams.set("function", "EARNINGS");
+    url.searchParams.set("symbol", ticker);
+    url.searchParams.set("apikey", apiKey);
+    const res = await fetch(url.toString(), { next: { revalidate: FUNDAMENTALS_CACHE_SECONDS } });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { quarterlyEarnings?: { reportedDate?: string }[]; Information?: string; Note?: string };
+    if (data.Information || data.Note) return [];
+    return (data.quarterlyEarnings ?? [])
+      .map((q) => q.reportedDate)
+      .filter((d): d is string => !!d)
+      .sort()
+      .reverse()
+      .slice(0, numQuarters);
+  } catch (err) {
+    console.error(`[ai-earnings] historical report dates lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+export interface OptionsRichness {
+  ticker: string;
+  expirationDate: string;
+  straddle: AtmStraddle | null;
+  historicalMoveCount: number;
+  avgRealizedAbsMovePct: number | null;
+  richnessRatio: number | null; // impliedMovePct / avgRealizedAbsMovePct
+}
+
+const HISTORICAL_MOVE_QUARTERS = 12;
+
+async function getOptionsRichness(ticker: string, expirationDate: string): Promise<OptionsRichness> {
+  const empty: OptionsRichness = {
+    ticker,
+    expirationDate,
+    straddle: null,
+    historicalMoveCount: 0,
+    avgRealizedAbsMovePct: null,
+    richnessRatio: null,
+  };
+
+  try {
+    const reportDates = await getHistoricalReportDates(ticker, HISTORICAL_MOVE_QUARTERS);
+    const straddlePromise = computeAtmStraddle(ticker, expirationDate);
+
+    if (reportDates.length === 0) {
+      return { ...empty, straddle: await straddlePromise };
+    }
+
+    const earliest = new Date(reportDates[reportDates.length - 1]);
+    earliest.setDate(earliest.getDate() - 7); // lead a few days so the prior trading day's close is in range
+    const [straddle, bars] = await Promise.all([
+      straddlePromise,
+      getCustomBars(ticker, { timespan: "day", from: toDateStr(earliest), to: toDateStr(new Date()) }),
+    ]);
+
+    const closesByDate = new Map(bars.map((b) => [toDateStr(new Date(b.t)), b.c]));
+    const sortedDates = [...closesByDate.keys()].sort();
+
+    const absMoves: number[] = [];
+    for (const reportedDate of reportDates) {
+      const idx = sortedDates.indexOf(reportedDate);
+      if (idx <= 0) continue; // no bar that day, or no prior trading day to compare against
+      const eventClose = closesByDate.get(sortedDates[idx])!;
+      const priorClose = closesByDate.get(sortedDates[idx - 1])!;
+      if (priorClose === 0) continue;
+      absMoves.push(Math.abs((eventClose - priorClose) / priorClose));
+    }
+
+    const avgRealizedAbsMovePct = absMoves.length > 0 ? absMoves.reduce((a, b) => a + b, 0) / absMoves.length : null;
+    const richnessRatio =
+      straddle?.impliedMovePct != null && avgRealizedAbsMovePct !== null && avgRealizedAbsMovePct > 0
+        ? straddle.impliedMovePct / avgRealizedAbsMovePct
+        : null;
+
+    return { ticker, expirationDate, straddle, historicalMoveCount: absMoves.length, avgRealizedAbsMovePct, richnessRatio };
+  } catch (err) {
+    console.error(`[ai-earnings] options richness lookup failed for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
+    return empty;
+  }
+}
+
 export interface AiEarningsData {
   asOf: string;
   scores: AiEarningsScore[];
   tickersWithData: number;
   tickersRequested: number;
+  optionsRichness?: OptionsRichness[];
 }
 
-export async function getAiEarningsData(): Promise<AiEarningsData> {
+export async function getAiEarningsData(expiration?: string): Promise<AiEarningsData> {
   const perTicker = await Promise.all(
     AI_EARNINGS_UNIVERSE.map(async (t) => {
       const quarters = await getQuarterlyMetrics(t.ticker);
@@ -296,10 +453,22 @@ export async function getAiEarningsData(): Promise<AiEarningsData> {
     `[ai-earnings] ${scores.length}/${AI_EARNINGS_UNIVERSE.length} tickers returned usable fundamentals data.`
   );
 
+  let optionsRichness: OptionsRichness[] | undefined;
+  if (expiration) {
+    optionsRichness = await Promise.all(
+      AI_EARNINGS_UNIVERSE.map((t) => getOptionsRichness(t.ticker, expiration))
+    );
+    const withStraddle = optionsRichness.filter((r) => r.straddle?.straddlePrice != null).length;
+    console.error(
+      `[ai-earnings] options richness for ${expiration}: ${withStraddle}/${AI_EARNINGS_UNIVERSE.length} tickers returned a straddle price.`
+    );
+  }
+
   return {
     asOf: new Date().toISOString().slice(0, 10),
     scores,
     tickersWithData: scores.length,
     tickersRequested: AI_EARNINGS_UNIVERSE.length,
+    ...(optionsRichness ? { optionsRichness } : {}),
   };
 }
