@@ -153,8 +153,19 @@ export default function AIEarningsPanel() {
                 {data.scores.length === 0 && (
                   <tr>
                     <td colSpan={10} className="skeleton">
-                      No tickers returned usable fundamentals data — check ALPHA_VANTAGE_API_KEY and
-                      Vercel logs for <code>[ai-earnings]</code> lines.
+                      No tickers returned usable fundamentals data.
+                      {data.diagnostics && data.diagnostics.length > 0 ? (
+                        <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem", textAlign: "left" }}>
+                          {data.diagnostics.slice(0, 12).map((d, i) => (
+                            <li key={i}>{d}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <>
+                          {" "}
+                          Check ALPHA_VANTAGE_API_KEY and Vercel logs for <code>[ai-earnings]</code> lines.
+                        </>
+                      )}
                     </td>
                   </tr>
                 )}

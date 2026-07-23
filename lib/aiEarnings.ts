@@ -82,10 +82,22 @@ function toFloat(x: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-async function fetchStatement(function_: "CASH_FLOW" | "INCOME_STATEMENT", ticker: string): Promise<AlphaVantageQuarterlyReport[] | null> {
+// `notes` collects one human-readable reason per failure (missing key, HTTP
+// status, rate-limit message, etc.) so the *actual* cause of a "0/6 tickers"
+// result is visible in the API response and the UI, not just Vercel's
+// server console — this is what showed up as "No tickers returned usable
+// fundamentals data" with no further explanation before this was added.
+async function fetchStatement(
+  function_: "CASH_FLOW" | "INCOME_STATEMENT",
+  ticker: string,
+  notes: string[]
+): Promise<AlphaVantageQuarterlyReport[] | null> {
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
-  if (!apiKey) return null;
+  if (!apiKey) {
+    notes.push(`${ticker} ${function_}: ALPHA_VANTAGE_API_KEY is not set`);
+    return null;
+  }
 
   try {
     const url = new URL(ALPHA_VANTAGE_BASE);
@@ -94,19 +106,27 @@ async function fetchStatement(function_: "CASH_FLOW" | "INCOME_STATEMENT", ticke
     url.searchParams.set("apikey", apiKey);
     const res = await fetch(url.toString(), { next: { revalidate: FUNDAMENTALS_CACHE_SECONDS } });
     if (!res.ok) {
+      const msg = `${ticker} ${function_}: HTTP ${res.status}`;
       console.error(`[ai-earnings] Alpha Vantage ${function_} request failed for ${ticker}: ${res.status}`);
+      notes.push(msg);
       return null;
     }
     const data = (await res.json()) as AlphaVantageStatementResponse;
     if (data.Information || data.Note) {
-      console.error(
-        `[ai-earnings] Alpha Vantage ${function_} rate-limited/errored for ${ticker}: ${(data.Information || data.Note || "").slice(0, 200)}`
-      );
+      const reason = (data.Information || data.Note || "").slice(0, 200);
+      console.error(`[ai-earnings] Alpha Vantage ${function_} rate-limited/errored for ${ticker}: ${reason}`);
+      notes.push(`${ticker} ${function_}: ${reason}`);
       return null;
     }
-    return data.quarterlyReports ?? null;
+    if (!data.quarterlyReports || data.quarterlyReports.length === 0) {
+      notes.push(`${ticker} ${function_}: response had no quarterlyReports`);
+      return null;
+    }
+    return data.quarterlyReports;
   } catch (err) {
-    console.error(`[ai-earnings] Alpha Vantage ${function_} lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[ai-earnings] Alpha Vantage ${function_} lookup threw for ${ticker}: ${msg}`);
+    notes.push(`${ticker} ${function_}: ${msg}`);
     return null;
   }
 }
@@ -141,8 +161,11 @@ function financingDependency(q: QuarterMetrics): number | null {
 // Returns most-recent-first, up to numQuarters. Null if either statement is
 // unavailable (missing key, rate-limited, or errored) — the caller treats
 // this ticker as having no data rather than failing the whole screen.
-async function getQuarterlyMetrics(ticker: string, numQuarters = 8): Promise<QuarterMetrics[] | null> {
-  const [cf, inc] = await Promise.all([fetchStatement("CASH_FLOW", ticker), fetchStatement("INCOME_STATEMENT", ticker)]);
+async function getQuarterlyMetrics(ticker: string, notes: string[], numQuarters = 8): Promise<QuarterMetrics[] | null> {
+  const [cf, inc] = await Promise.all([
+    fetchStatement("CASH_FLOW", ticker, notes),
+    fetchStatement("INCOME_STATEMENT", ticker, notes),
+  ]);
   if (!cf || !inc) return null;
 
   const incByDate = new Map(inc.map((q) => [q.fiscalDateEnding, q]));
@@ -373,12 +396,18 @@ export interface AiEarningsData {
   tickersWithData: number;
   tickersRequested: number;
   optionsRichness?: OptionsRichness[];
+  // Per-ticker/statement failure reasons (missing key, HTTP status, Alpha
+  // Vantage rate-limit text) — present whenever any fetch failed, even if
+  // other tickers still came through, so a "0/6" or partial result is
+  // debuggable from the browser instead of requiring Vercel log access.
+  diagnostics?: string[];
 }
 
 export async function getAiEarningsData(expiration?: string): Promise<AiEarningsData> {
+  const notes: string[] = [];
   const perTicker = await Promise.all(
     AI_EARNINGS_UNIVERSE.map(async (t) => {
-      const quarters = await getQuarterlyMetrics(t.ticker);
+      const quarters = await getQuarterlyMetrics(t.ticker, notes);
       return { meta: t, quarters };
     })
   );
@@ -470,5 +499,6 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
     tickersWithData: scores.length,
     tickersRequested: AI_EARNINGS_UNIVERSE.length,
     ...(optionsRichness ? { optionsRichness } : {}),
+    ...(notes.length > 0 ? { diagnostics: notes } : {}),
   };
 }
