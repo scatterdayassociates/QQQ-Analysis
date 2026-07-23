@@ -1,13 +1,17 @@
 # QQQ / TQQQ Dashboard
 
-A lightweight Next.js dashboard with three tabs:
+A lightweight Next.js dashboard with four tabs:
 
 1. **Intraday Daypart** — QQQ/TQQQ intraday volume in 15-minute buckets across the regular
-   session (9:30 AM–4:00 PM ET), with a realized-volatility proxy plotted alongside.
+   session (9:30 AM–4:00 PM ET), with a realized-volatility proxy plotted alongside, plus an
+   Overnight Gap sub-view (close-to-open moves, ranked and tagged against catalysts).
 2. **Fundamental Analysis** — a 7-metric market strength/tactical model (macro, trend, credit,
    breadth, volatility) with a plain-English explanation of each metric.
 3. **Catalyst Tracker** — the top 10 Nasdaq-100 components, their historical 1-day reactions to
-   macro catalysts (FOMC/CPI/jobs reports), and an upcoming-catalyst calendar.
+   macro catalysts and their own earnings, and an upcoming-catalyst calendar.
+4. **AI Earnings Analysis** — an AI-capex buyer fragility screen across a small tiered universe
+   (Alphabet, Microsoft, Meta, Amazon, Oracle, CoreWeave), scoring whether each is still funding
+   infrastructure spend from operating cash flow or increasingly from debt/equity issuance.
 
 Powered by the [Massive](https://massive.com) (formerly Polygon.io) market data API, plus
 free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inputs (see below).
@@ -128,6 +132,37 @@ earnings dates), and an upcoming-catalysts calendar.
   tags (see its own section below), where a ~1-month window is less of a gap and the
   before-open/after-close distinction actually matters.
 
+## Tab 4: AI Earnings Analysis
+
+An AI-capex buyer fragility screen, ported from an uploaded reference implementation (a Python
+CLI script with a synthetic-data-validated scoring model). Thesis: capex *level* isn't the
+signal — funding *source* is. Screens a fixed, tiered universe on whether they're still funding
+infrastructure spend from operating cash flow or increasingly from debt/equity issuance.
+
+- **Universe**: Alphabet, Microsoft, Meta, Amazon (Tier 1 — hyperscalers funding capex mostly
+  from operations, so far), Oracle (Tier 2 — leveraged buyer increasingly using debt/equity
+  issuance), CoreWeave (Tier 3 — highest-beta/credit-risk name most exposed if the cycle
+  cracks). This is a separate, purpose-built universe from Catalyst Tracker's top-10 list, not
+  a subset of it.
+- **Metrics** (all computed from real quarterly statement data, not fabricated): capex coverage
+  ratio (OCF ÷ capex, latest quarter), capex-to-revenue and financing dependency (debt+equity
+  issued ÷ capex, both trailing 4-quarter averages so a single one-off raise doesn't outrank a
+  name that's been persistently externally-funding capex for years), coverage trend (YoY
+  direction), buyback Δ YoY (a cut is often the first lever pulled before touching capex), and a
+  composite **Fragility Score** — a cross-sectional z-scored blend of all four, self-calibrating
+  as tickers are added (no hardcoded thresholds).
+- **Data source**: Alpha Vantage's `CASH_FLOW` and `INCOME_STATEMENT` endpoints (same
+  `ALPHA_VANTAGE_API_KEY` already used elsewhere — no new key needed). Unlike everything else in
+  this app, these have no bulk mode: **2 requests per ticker, 12 total per load** — the most
+  expensive external call in the app by request count. Cached 24 hours (`revalidate: 86400`,
+  longer than anywhere else) since quarterly fundamentals only change 4x/year. A rate-limited or
+  missing ticker just drops out of the table rather than failing the page; check Vercel logs for
+  `[ai-earnings]` lines to see exactly how many tickers came through.
+- **Options cross-reference** (implied vs. realized earnings-day move, from the reference
+  implementation) is not yet wired in — it needs Massive's **Options** product line (a different
+  subscription from the Stocks data the rest of this app uses), and is being verified live before
+  being added.
+
 No charting library, no CSS framework — just React, plain CSS, and hand-rolled SVG (a combo
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
 bundle small.
@@ -140,13 +175,15 @@ app/
   layout.tsx, globals.css  shell + design tokens (dark by default, light via prefers-color-scheme)
   api/daypart/route.ts        server route: daypart tab, calls Massive, keeps the API key secret
   api/fundamentals/route.ts   server route: fundamentals tab, calls Massive + FRED
-  api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive
+  api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive + Alpha Vantage
   api/overnight-gap/route.ts  server route: overnight gap view, calls Massive + Finnhub
+  api/ai-earnings/route.ts    server route: AI earnings analysis tab, calls Alpha Vantage
 lib/massive.ts               Massive API client (server-only) + Parkinson volatility calc
 lib/fundamentals.ts          7-metric scoring model + tactical decision logic (server-only)
 lib/catalysts.ts             top-10 list + macro calendar + 1-day reaction calc (server-only)
 lib/overnightGap.ts          close-to-open gap calc + catalyst tagging, reuses catalysts.ts's list/calendar
-components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker)
+lib/aiEarnings.ts            capex fragility screen: fundamentals fetch + cross-sectional scoring (server-only)
+components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis)
 components/DaypartPanel.tsx       manages the list of date-range entries (up to 5), the add/remove UI, and the sub-nav to Overnight Gap
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
@@ -158,11 +195,12 @@ components/OvernightGapTable.tsx  sortable ranked gap table
 components/FundamentalAnalysisPanel.tsx  tactical decision card, gauge, and the 7 metric cards
 components/StrengthGauge.tsx      dependency-free SVG semicircle gauge
 components/CatalystPanel.tsx      top-10 table, reactions table (with filters), upcoming-catalysts table
+components/AIEarningsPanel.tsx    ranked fragility-score table for the AI capex buyer universe
 ```
 
 The Massive API key is **only ever read server-side** (inside `lib/massive.ts`, used by all
-four API routes). It is never sent to the browser. FRED's CSV endpoint is public and needs no
-key.
+routes that need it). It is never sent to the browser. FRED's CSV endpoint is public and needs
+no key.
 
 ## 1. Local setup
 

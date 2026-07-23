@@ -790,6 +790,26 @@ tbody tr.active td {
   color: var(--accent-earnings);
 }
 
+/* ---------- AI earnings analysis (tier chips) ---------- */
+
+.event-chip.tier-1 {
+  background: color-mix(in srgb, var(--accent-qqq) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-qqq) 45%, var(--border));
+  color: var(--accent-qqq);
+}
+
+.event-chip.tier-2 {
+  background: color-mix(in srgb, var(--accent-vol) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-vol) 45%, var(--border));
+  color: var(--accent-vol);
+}
+
+.event-chip.tier-3 {
+  background: color-mix(in srgb, var(--down) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--down) 45%, var(--border));
+  color: var(--down);
+}
+
 /* ---------- fundamental analysis ---------- */
 
 .chart-label {
