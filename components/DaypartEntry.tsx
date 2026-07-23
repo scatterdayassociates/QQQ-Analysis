@@ -164,6 +164,15 @@ export default function DaypartEntry({ entryId, label, showRemove, onRemove }: D
             <div className="chart-wrap">
               <DaypartChart buckets={buckets} hoveredIndex={hoveredIndex} onHover={setHoveredIndex} />
             </div>
+            <p className="footnote chart-footnote">
+              <strong>Realized Vol (proxy)</strong> = Parkinson (1980) range estimator, computed from
+              each 15-minute QQQ bar&apos;s own high/low and annualized to a VIX-comparable percentage.
+              It is not real VIX — Massive&apos;s VIX index data requires a separate paid Indices
+              subscription (confirmed unavailable on the current plan), and neither Alpha Vantage nor
+              FRED provide intraday VIX either (Alpha Vantage doesn&apos;t offer index data at all;
+              FRED&apos;s VIX series is daily-close-only). This proxy needs none of that, since
+              it&apos;s derived entirely from the QQQ bar data already being fetched for volume.
+            </p>
           </div>
 
           <details className="card table-accordion">

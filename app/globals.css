@@ -710,6 +710,13 @@ tbody tr.active td {
   padding: 0.05rem 0.3rem;
 }
 
+.chart-footnote {
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  max-width: none;
+}
+
 /* ---------- catalyst tracker ---------- */
 
 .up {
