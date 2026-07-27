@@ -694,6 +694,14 @@ tbody tr.active td {
   margin-top: 1.3rem;
 }
 
+.footnote p {
+  margin: 0 0 0.6rem;
+}
+
+.footnote p:last-child {
+  margin-bottom: 0;
+}
+
 .footnote strong {
   color: var(--muted);
   font-weight: 600;

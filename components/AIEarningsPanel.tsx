@@ -208,43 +208,68 @@ export default function AIEarningsPanel() {
               </tbody>
             </table>
           </div>
-          <p className="footnote">
-            <strong>Options Richness.</strong> Pulled live from Massive&apos;s Options Chain Snapshot
-            (<code>/v3/snapshot/options/&#123;ticker&#125;</code>, requires a Massive Options-tier
-            subscription) using the strike closest to spot for the chosen expiration.{" "}
-            <strong>Implied Move</strong> = (ATM call + ATM put <code>day.close</code>) ÷ spot price —
-            the options market&apos;s straddle-implied move by that expiration; the live snapshot has
-            no <code>last_quote</code>/bid-ask field, so <code>day.close</code> (last traded price) is
-            the only price used. <strong>Avg Realized |Move|</strong> = average absolute close-to-close
-            move on this ticker&apos;s own trailing 12 quarters of historical earnings report dates
-            (Alpha Vantage <code>EARNINGS</code> + Massive daily bars). <strong>Richness</strong>{" "}
-            = Implied Move ÷ Avg Realized |Move| — above 1.0x means the market is pricing in a bigger
-            move than this ticker has historically delivered on earnings.
-          </p>
+          <div className="footnote">
+            <p>
+              <strong>Options Richness.</strong> Pulled live from Massive&apos;s Options Chain Snapshot
+              (<code>/v3/snapshot/options/&#123;ticker&#125;</code>, requires a Massive Options-tier
+              subscription) using the strike closest to spot for the chosen expiration.
+            </p>
+            <p>
+              <strong>Implied Move</strong> = (ATM call + ATM put <code>day.close</code>) ÷ spot price
+              — the options market&apos;s straddle-implied move by that expiration; the live snapshot
+              has no <code>last_quote</code>/bid-ask field, so <code>day.close</code> (last traded
+              price) is the only price used.
+            </p>
+            <p>
+              <strong>Avg Realized |Move|</strong> = average absolute close-to-close move on this
+              ticker&apos;s own trailing 12 quarters of historical earnings report dates (Alpha
+              Vantage <code>EARNINGS</code> + Massive daily bars).
+            </p>
+            <p>
+              <strong>Richness</strong> = Implied Move ÷ Avg Realized |Move| — above 1.0x means the
+              market is pricing in a bigger move than this ticker has historically delivered on
+              earnings.
+            </p>
+          </div>
         </div>
       )}
 
-      <p className="footnote">
-        <strong>Methodology.</strong> Screens a fixed universe (Alphabet, Microsoft, Meta, Amazon,
-        Oracle, CoreWeave) tiered by capex-funding posture — Tier 1 hyperscalers still funding mostly
-        from operations (so far), Tier 2 leveraged buyers increasingly using debt/equity issuance,
-        Tier 3 the highest-beta/credit-risk names most exposed if the cycle cracks. All figures come
-        from Alpha Vantage&apos;s <code>CASH_FLOW</code> and <code>INCOME_STATEMENT</code> endpoints
-        (same <code>ALPHA_VANTAGE_API_KEY</code> used elsewhere in this app) — 2 requests per ticker,
-        12 total per load, cached 24 hours since quarterly fundamentals only change 4x/year; a
-        rate-limited or missing ticker just drops out of the table rather than failing the page.{" "}
-        <strong>Coverage</strong> = operating cash flow ÷ capex, latest quarter (below 1.0x means
-        capex wasn&apos;t covered by operations that quarter). <strong>Capex/Rev</strong> and{" "}
-        <strong>Financing</strong> (debt + equity issued ÷ capex) use trailing 4-quarter averages
-        rather than latest-quarter-only, so a single one-off raise (like a large one-time equity
-        issuance) doesn&apos;t outrank a name that has been persistently externally-funding capex for
-        years. <strong>Trend</strong> = latest coverage ratio minus the same quarter last year
-        (negative = deteriorating). <strong>Buyback Δ YoY</strong> = buybacks this quarter minus a
-        year ago — a sharp cut is often the first lever management pulls before touching the capex
-        plan. <strong>Fragility Score</strong> combines all of the above into one cross-sectional
-        z-scored composite (recalibrates automatically as tickers are added) — higher means more
-        fragile.
-      </p>
+      <div className="footnote">
+        <p>
+          <strong>Methodology.</strong> Screens a fixed universe (Alphabet, Microsoft, Meta, Amazon,
+          Oracle, CoreWeave) tiered by capex-funding posture — Tier 1 hyperscalers still funding
+          mostly from operations (so far), Tier 2 leveraged buyers increasingly using debt/equity
+          issuance, Tier 3 the highest-beta/credit-risk names most exposed if the cycle cracks. All
+          figures come from Alpha Vantage&apos;s <code>CASH_FLOW</code> and{" "}
+          <code>INCOME_STATEMENT</code> endpoints (same <code>ALPHA_VANTAGE_API_KEY</code> used
+          elsewhere in this app) — 2 requests per ticker, 12 total per load, cached 24 hours since
+          quarterly fundamentals only change 4x/year; a rate-limited or missing ticker just drops out
+          of the table rather than failing the page.
+        </p>
+        <p>
+          <strong>Coverage</strong> = operating cash flow ÷ capex, latest quarter (below 1.0x means
+          capex wasn&apos;t covered by operations that quarter).
+        </p>
+        <p>
+          <strong>Capex/Rev</strong> and <strong>Financing</strong> (debt + equity issued ÷ capex)
+          use trailing 4-quarter averages rather than latest-quarter-only, so a single one-off raise
+          (like a large one-time equity issuance) doesn&apos;t outrank a name that has been
+          persistently externally-funding capex for years.
+        </p>
+        <p>
+          <strong>Trend</strong> = latest coverage ratio minus the same quarter last year (negative =
+          deteriorating).
+        </p>
+        <p>
+          <strong>Buyback Δ YoY</strong> = buybacks this quarter minus a year ago — a sharp cut is
+          often the first lever management pulls before touching the capex plan.
+        </p>
+        <p>
+          <strong>Fragility Score</strong> combines all of the above into one cross-sectional
+          z-scored composite (recalibrates automatically as tickers are added) — higher means more
+          fragile.
+        </p>
+      </div>
     </section>
   );
 }
