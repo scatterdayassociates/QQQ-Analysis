@@ -29,6 +29,10 @@ function pctClass(v: number | null): string {
   return v >= 0 ? "up" : "down";
 }
 
+function formatPeRatio(v: number | null): string {
+  return v === null ? "—" : v.toFixed(1);
+}
+
 function formatDaysUntilEarnings(v: number | null): string {
   if (v === null) return "—";
   if (v === 0) return "Today";
@@ -101,6 +105,7 @@ export default function CatalystPanel() {
                     <th>Change</th>
                     <th>Volume</th>
                     <th>Market Cap</th>
+                    <th>P/E Ratio</th>
                     <th>Days Till Earnings</th>
                   </tr>
                 </thead>
@@ -113,6 +118,7 @@ export default function CatalystPanel() {
                       <td className={pctClass(c.changePct)}>{formatPct(c.changePct)}</td>
                       <td>{formatVolume(c.volume)}</td>
                       <td>{formatMarketCap(c.marketCap)}</td>
+                      <td>{formatPeRatio(c.peRatio)}</td>
                       <td>{formatDaysUntilEarnings(c.daysUntilEarnings)}</td>
                     </tr>
                   ))}
@@ -219,7 +225,10 @@ export default function CatalystPanel() {
         continuously-rebalanced live ranking, since weights drift with price and the index rebalances
         quarterly. Price, change, and volume come from Massive&apos;s Custom Bars endpoint; market cap
         comes from Massive&apos;s Ticker Details (reference) endpoint and shows “—” if unavailable on the
-        current plan. <strong>Days Till Earnings</strong> is each ticker&apos;s next scheduled report
+        current plan. <strong>P/E Ratio</strong> is trailing P/E from Alpha Vantage&apos;s{" "}
+        <code>OVERVIEW</code> endpoint (one request per ticker, same key as the rest of this tab) and
+        shows “—” for unprofitable companies (negative trailing EPS) or if unavailable.{" "}
+        <strong>Days Till Earnings</strong> is each ticker&apos;s next scheduled report
         date (from Alpha Vantage, same source as Upcoming Catalysts) minus today&apos;s date, and shows
         “—” if no report is scheduled within the lookahead window or Alpha Vantage isn&apos;t configured.
         The macro calendar (FOMC rate decisions, CPI releases, jobs reports) is compiled

@@ -215,6 +215,62 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
   return result;
 }
 
+interface AlphaVantageOverviewResponse {
+  PERatio?: string;
+  Information?: string;
+  Note?: string;
+}
+
+/**
+ * Alpha Vantage's OVERVIEW endpoint (function=OVERVIEW&symbol=X) — the
+ * source for trailing P/E, since neither Massive endpoint already used in
+ * this file carries a P/E figure. Like EARNINGS above, no bulk mode: one
+ * request per ticker. PERatio comes back as the literal string "None" for
+ * unprofitable companies (negative trailing EPS) — those show "—" in the UI
+ * rather than a misleading number. Cached for 1 hour, same as the upcoming
+ * earnings lookup above, since it's a valuation ratio rather than a
+ * slow-moving fundamental.
+ */
+async function getPeRatiosByTicker(tickers: string[]): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping P/E ratio lookup.");
+    return result;
+  }
+
+  await Promise.all(
+    tickers.map(async (ticker) => {
+      try {
+        const url = new URL("https://www.alphavantage.co/query");
+        url.searchParams.set("function", "OVERVIEW");
+        url.searchParams.set("symbol", ticker);
+        url.searchParams.set("apikey", apiKey);
+        const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+        if (!res.ok) {
+          console.error(`[catalysts] Alpha Vantage OVERVIEW request failed for ${ticker}: ${res.status}`);
+          return;
+        }
+        const data = (await res.json()) as AlphaVantageOverviewResponse;
+        if (data.Information || data.Note) {
+          console.error(
+            `[catalysts] Alpha Vantage OVERVIEW rate-limited/errored for ${ticker}: ${(data.Information || data.Note || "").slice(0, 200)}`
+          );
+          return;
+        }
+        const pe = Number(data.PERatio);
+        if (data.PERatio && data.PERatio !== "None" && Number.isFinite(pe)) result.set(ticker, pe);
+      } catch (err) {
+        console.error(`[catalysts] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })
+  );
+
+  console.error(`[catalysts] Alpha Vantage P/E ratios: ${result.size}/${tickers.length} tickers returned a value.`);
+  return result;
+}
+
 // Top 10 Nasdaq-100 (QQQ) holdings by weight, as of mid-2026. Weights drift
 // with price and the index rebalances quarterly, so re-verify this list
 // periodically rather than treating it as permanent. Exported so the
@@ -286,6 +342,7 @@ export interface CatalystComponent {
   changePct: number | null;
   volume: number | null;
   marketCap: number | null;
+  peRatio: number | null; // trailing P/E, null if unprofitable (negative EPS) or unavailable
   daysUntilEarnings: number | null; // next scheduled earnings date minus today; null if unavailable
 }
 
@@ -325,11 +382,12 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  const [barsByTicker, marketCaps, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
+  const [barsByTicker, marketCaps, peRatiosByTicker, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
+    getPeRatiosByTicker(tickers),
     getUpcomingEarningsMap(tickers, "3month"),
     getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr),
   ]);
@@ -351,6 +409,7 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
       changePct,
       volume: latest?.v ?? null,
       marketCap: marketCaps[i],
+      peRatio: peRatiosByTicker.get(c.ticker) ?? null,
       daysUntilEarnings: nextEarningsDate ? daysUntil(nextEarningsDate) : null,
     };
   });

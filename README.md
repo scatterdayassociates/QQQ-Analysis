@@ -103,6 +103,9 @@ earnings dates), and an upcoming-catalysts calendar.
   app's placeholder-style calendar.
 - **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
   unavailable on the current plan, rather than failing the whole table.
+- **P/E Ratio** (trailing) comes from Alpha Vantage's `OVERVIEW` endpoint — one request per
+  ticker (10 total, no bulk mode), cached 1 hour. Shows "—" for unprofitable companies (negative
+  trailing EPS) or if unavailable.
 - **Upcoming earnings** for each top-10 ticker come from [Alpha Vantage's](https://www.alphavantage.co)
   free `EARNINGS_CALENDAR` endpoint — officially documented, free-tier accessible, returns CSV
   (not JSON, unlike most Alpha Vantage endpoints). Requires a free account and an
@@ -151,13 +154,17 @@ infrastructure spend from operating cash flow or increasingly from debt/equity i
   direction), buyback Δ YoY (a cut is often the first lever pulled before touching capex), and a
   composite **Fragility Score** — a cross-sectional z-scored blend of all four, self-calibrating
   as tickers are added (no hardcoded thresholds).
+- **P/E Ratio** (trailing), same source and behavior as Catalyst Tracker's column above — Alpha
+  Vantage's `OVERVIEW` endpoint, one request per ticker, cached 1 hour. A valuation reference
+  alongside the fragility metrics, not itself part of the Fragility Score.
 - **Data source**: Alpha Vantage's `CASH_FLOW` and `INCOME_STATEMENT` endpoints (same
   `ALPHA_VANTAGE_API_KEY` already used elsewhere — no new key needed). Unlike everything else in
-  this app, these have no bulk mode: **2 requests per ticker, 12 total per load** — the most
-  expensive external call in the app by request count. Cached 24 hours (`revalidate: 86400`,
-  longer than anywhere else) since quarterly fundamentals only change 4x/year. A rate-limited or
-  missing ticker just drops out of the table rather than failing the page; check Vercel logs for
-  `[ai-earnings]` lines to see exactly how many tickers came through.
+  this app, these have no bulk mode: **2 requests per ticker, 12 total per load (18 with P/E
+  Ratio)** — the most expensive external call in the app by request count. Fundamentals cached 24
+  hours (`revalidate: 86400`) since they only change 4x/year; P/E Ratio cached 1 hour. A
+  rate-limited or missing ticker just drops out of the table rather than failing the page; check
+  Vercel logs (or the in-app diagnostics list under an empty table) for `[ai-earnings]` lines to
+  see exactly how many tickers came through and why.
 - **Options Richness** (optional, computed only when an expiration date is entered in the tab):
   compares the options market's *implied* move into a given expiration against each ticker's own
   trailing *realized* earnings-day moves. **Implied Move** = ATM straddle price ÷ spot, from

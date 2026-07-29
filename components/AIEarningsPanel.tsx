@@ -18,6 +18,10 @@ function fmtRatio(v: number | null): string {
   return v === null ? "—" : v.toFixed(2);
 }
 
+function fmtPeRatio(v: number | null): string {
+  return v === null ? "—" : v.toFixed(1);
+}
+
 function fmtPct(v: number | null): string {
   return v === null ? "—" : `${(v * 100).toFixed(1)}%`;
 }
@@ -118,6 +122,7 @@ export default function AIEarningsPanel() {
                 <tr>
                   <th>Ticker</th>
                   <th>Tier</th>
+                  <th>P/E Ratio</th>
                   <th>Latest Qtr</th>
                   <th>Coverage</th>
                   <th>Capex/Rev</th>
@@ -138,6 +143,7 @@ export default function AIEarningsPanel() {
                     <td>
                       <span className={`event-chip tier-${s.tier}`}>{TIER_LABELS[s.tier]}</span>
                     </td>
+                    <td>{fmtPeRatio(s.peRatio)}</td>
                     <td>{s.latestQuarter}</td>
                     <td>{fmtRatio(s.capexCoverageRatio)}x</td>
                     <td>{fmtPct(s.capexToRevenue)}</td>
@@ -152,7 +158,7 @@ export default function AIEarningsPanel() {
                 ))}
                 {data.scores.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="skeleton">
+                    <td colSpan={11} className="skeleton">
                       No tickers returned usable fundamentals data.
                       {data.diagnostics && data.diagnostics.length > 0 ? (
                         <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem", textAlign: "left" }}>
@@ -242,9 +248,15 @@ export default function AIEarningsPanel() {
           issuance, Tier 3 the highest-beta/credit-risk names most exposed if the cycle cracks. All
           figures come from Alpha Vantage&apos;s <code>CASH_FLOW</code> and{" "}
           <code>INCOME_STATEMENT</code> endpoints (same <code>ALPHA_VANTAGE_API_KEY</code> used
-          elsewhere in this app) — 2 requests per ticker, 12 total per load, cached 24 hours since
-          quarterly fundamentals only change 4x/year; a rate-limited or missing ticker just drops out
-          of the table rather than failing the page.
+          elsewhere in this app) — 2 requests per ticker, 12 total per load (18 with P/E Ratio below),
+          cached 24 hours since quarterly fundamentals only change 4x/year; a rate-limited or missing
+          ticker just drops out of the table rather than failing the page.
+        </p>
+        <p>
+          <strong>P/E Ratio</strong> is trailing P/E from Alpha Vantage&apos;s <code>OVERVIEW</code>{" "}
+          endpoint (one more request per ticker, same key) — a valuation reference alongside the
+          fragility metrics, not itself part of the Fragility Score. Shows “—” for unprofitable
+          companies (negative trailing EPS) or if unavailable.
         </p>
         <p>
           <strong>Coverage</strong> = operating cash flow ÷ capex, latest quarter (below 1.0x means

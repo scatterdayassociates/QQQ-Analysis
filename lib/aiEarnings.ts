@@ -131,6 +131,64 @@ async function fetchStatement(
   }
 }
 
+interface AlphaVantageOverviewResponse {
+  PERatio?: string;
+  Information?: string;
+  Note?: string;
+}
+
+/**
+ * Alpha Vantage's OVERVIEW endpoint (function=OVERVIEW&symbol=X) — the
+ * source for trailing P/E, a valuation ratio orthogonal to the capex/
+ * financing metrics fetched above. One request per ticker (no bulk mode),
+ * same convention as the rest of this file's Alpha Vantage calls.
+ * PERatio comes back as the literal string "None" for unprofitable
+ * companies (negative trailing EPS) — those resolve to null rather than a
+ * misleading number.
+ */
+async function getPeRatiosByTicker(tickers: string[], notes: string[]): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    notes.push("P/E ratios: ALPHA_VANTAGE_API_KEY is not set");
+    return result;
+  }
+
+  await Promise.all(
+    tickers.map(async (ticker) => {
+      try {
+        const url = new URL(ALPHA_VANTAGE_BASE);
+        url.searchParams.set("function", "OVERVIEW");
+        url.searchParams.set("symbol", ticker);
+        url.searchParams.set("apikey", apiKey);
+        const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+        if (!res.ok) {
+          notes.push(`${ticker} OVERVIEW: HTTP ${res.status}`);
+          return;
+        }
+        const data = (await res.json()) as AlphaVantageOverviewResponse;
+        if (data.Information || data.Note) {
+          notes.push(`${ticker} OVERVIEW: ${(data.Information || data.Note || "").slice(0, 200)}`);
+          return;
+        }
+        const pe = Number(data.PERatio);
+        if (data.PERatio && data.PERatio !== "None" && Number.isFinite(pe)) {
+          result.set(ticker, pe);
+        } else {
+          notes.push(`${ticker} OVERVIEW: no usable PERatio (${data.PERatio ?? "missing"})`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[ai-earnings] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${msg}`);
+        notes.push(`${ticker} OVERVIEW: ${msg}`);
+      }
+    })
+  );
+
+  return result;
+}
+
 export interface QuarterMetrics {
   fiscalDateEnding: string;
   operatingCashFlow: number;
@@ -227,6 +285,7 @@ export interface AiEarningsScore {
   ticker: string;
   name: string;
   tier: 1 | 2 | 3;
+  peRatio: number | null; // trailing P/E, null if unprofitable (negative EPS) or unavailable
   latestQuarter: string;
   capexCoverageRatio: number | null;
   capexToRevenue: number | null; // trailing 4Q average
@@ -405,12 +464,18 @@ export interface AiEarningsData {
 
 export async function getAiEarningsData(expiration?: string): Promise<AiEarningsData> {
   const notes: string[] = [];
-  const perTicker = await Promise.all(
-    AI_EARNINGS_UNIVERSE.map(async (t) => {
-      const quarters = await getQuarterlyMetrics(t.ticker, notes);
-      return { meta: t, quarters };
-    })
-  );
+  const [perTicker, peRatiosByTicker] = await Promise.all([
+    Promise.all(
+      AI_EARNINGS_UNIVERSE.map(async (t) => {
+        const quarters = await getQuarterlyMetrics(t.ticker, notes);
+        return { meta: t, quarters };
+      })
+    ),
+    getPeRatiosByTicker(
+      AI_EARNINGS_UNIVERSE.map((t) => t.ticker),
+      notes
+    ),
+  ]);
 
   const raw: (Omit<AiEarningsScore, "fragilityScore"> & { fragilityScore: null })[] = [];
   for (const { meta, quarters } of perTicker) {
@@ -420,6 +485,7 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
       ticker: meta.ticker,
       name: meta.name,
       tier: meta.tier,
+      peRatio: peRatiosByTicker.get(meta.ticker) ?? null,
       latestQuarter: latest.fiscalDateEnding,
       capexCoverageRatio: capexCoverageRatio(latest),
       capexToRevenue: trailingAverage(quarters, capexToRevenue),
