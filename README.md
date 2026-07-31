@@ -522,6 +522,31 @@ excludes it.
   ```bash
   curl "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10" | head -3
   ```
+- **"Access denied for user 'doadmin'@'x.x.x.x' (using password: YES)"** — this error comes from
+  MySQL itself rejecting the login (error 1045), which means the connection reached the database
+  fine — this is a credentials problem, not a network/firewall one (DigitalOcean's Trusted Sources
+  restriction would instead show as a connection timeout, never getting this far). Since this
+  error implies the connection reached the server, first rule out the DB side: if a client like
+  DbVisualizer or the `mysql` CLI already connects successfully with the same username/password to
+  the same host, the credentials themselves are correct and the bug is in how `DATABASE_URL` was
+  built. Most common causes, in order of likelihood:
+  - **A special character in the password wasn't percent-encoded** in the connection string.
+    `DATABASE_URL=mysql://user:password@host:port/db` is parsed as a URL — a password containing
+    `@`, `:`, `/`, `%`, `#`, `?`, etc. needs those characters percent-encoded (e.g. `@` → `%40`,
+    `:` → `%3A`) or the URL parser misreads where the password ends. `lib/db.ts` parses
+    `DATABASE_URL` with Node's standard `URL` class and decodes the username/password, so a
+    *correctly* percent-encoded password now works reliably — but the encoding still has to be done
+    on the way in. Quick way to build the encoded value correctly:
+    ```bash
+    node -e "console.log(encodeURIComponent('YOUR_RAW_PASSWORD'))"
+    ```
+    then use that output in place of the raw password in `DATABASE_URL`.
+  - **Stray whitespace or a trailing newline** pasted into Vercel's environment variable field —
+    same failure mode already called out for `MASSIVE_API_KEY` above. Clear the field and re-paste.
+  - **A stale/wrong password** — e.g. the DigitalOcean database password was reset after
+    `DATABASE_URL` was last set, or a different (old) password got copied in by mistake. Re-check
+    the current password directly in the DigitalOcean control panel and rebuild `DATABASE_URL`
+    from scratch rather than editing the existing value.
 - **T10Y2Y Regime tab loads but the episode table is empty while the daily detail table has
   rows** — this means the regime computation ran but every day so far falls in the first
   `REGIME_LOOKBACK_DAYS` rows of your configured `REGIME_BACKFILL_START` (which have no

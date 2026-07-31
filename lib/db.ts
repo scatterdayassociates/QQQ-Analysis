@@ -24,9 +24,29 @@ function getPool(): Pool {
     );
   }
 
-  const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+  // Parsed with Node's own URL, then passed to mysql2 as discrete fields —
+  // deliberately not just `mysql.createPool({ uri: connectionString, ...})`.
+  // That form leaves credential parsing to mysql2's internal URI handling,
+  // which is undocumented for how it merges with extra options like `ssl`;
+  // going through `URL` instead guarantees standard, well-defined
+  // percent-decoding of the username/password (a password containing `@`,
+  // `:`, `%`, etc. must be percent-encoded in the DATABASE_URL string, and
+  // this is what correctly decodes it back before it reaches mysql2).
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("DATABASE_URL is not a valid connection string. Expected format: mysql://user:password@host:port/dbname");
+  }
+
+  const host = url.hostname;
+  const isLocal = host === "localhost" || host === "127.0.0.1";
   pool = mysql.createPool({
-    uri: connectionString,
+    host,
+    port: url.port ? Number(url.port) : 3306,
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    database: url.pathname.replace(/^\//, ""),
     // DATE/DATETIME columns come back as plain "YYYY-MM-DD" strings instead
     // of JS Date objects (which would otherwise be constructed in the
     // server's local timezone and risk off-by-one-day bugs) — every date in
