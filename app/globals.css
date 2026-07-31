@@ -1004,6 +1004,122 @@ tbody tr.active td {
   color: var(--muted);
 }
 
+/* ---------- T10Y2Y regime ---------- */
+
+.regime-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.regime-chip.regime-growth-steepening {
+  background: color-mix(in srgb, var(--up) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--up) 45%, var(--border));
+  color: var(--up);
+}
+
+.regime-chip.regime-term-premium-steepening {
+  background: color-mix(in srgb, var(--down) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--down) 45%, var(--border));
+  color: var(--down);
+}
+
+.regime-chip.regime-steepening-mixed {
+  background: color-mix(in srgb, var(--accent-vol) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-vol) 45%, var(--border));
+  color: var(--accent-vol);
+}
+
+.regime-chip.regime-bull-flattening {
+  background: color-mix(in srgb, var(--accent-qqq) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-qqq) 45%, var(--border));
+  color: var(--accent-qqq);
+}
+
+.regime-chip.regime-bear-flattening {
+  background: color-mix(in srgb, var(--accent-tqqq) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-tqqq) 45%, var(--border));
+  color: var(--accent-tqqq);
+}
+
+.regime-chip.regime-flattening-mixed {
+  background: color-mix(in srgb, var(--accent-earnings) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-earnings) 45%, var(--border));
+  color: var(--accent-earnings);
+}
+
+.regime-chip.regime-range-bound {
+  background: color-mix(in srgb, var(--muted-2) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--muted-2) 45%, var(--border));
+  color: var(--muted-2);
+}
+
+.range-selector {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.range-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.range-btn:hover {
+  color: var(--text);
+}
+
+.range-btn.active {
+  background: color-mix(in srgb, var(--focus) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--focus) 45%, var(--border));
+  color: var(--focus);
+}
+
+.overlay-toggles {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.overlay-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.overlay-toggles input[type="checkbox"] {
+  accent-color: var(--focus);
+}
+
+.regime-legend {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.data-as-of {
+  font-size: 0.7rem;
+  color: var(--muted-2);
+  margin-top: 0.2rem;
+}
+
 @media (max-width: 760px) {
   .fa-top-grid {
     grid-template-columns: 1fr;

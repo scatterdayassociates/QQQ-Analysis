@@ -1,6 +1,6 @@
 # QQQ / TQQQ Dashboard
 
-A lightweight Next.js dashboard with four tabs:
+A lightweight Next.js dashboard with five tabs:
 
 1. **Intraday Daypart** — QQQ/TQQQ intraday volume in 15-minute buckets across the regular
    session (9:30 AM–4:00 PM ET), with a realized-volatility proxy plotted alongside, plus an
@@ -12,9 +12,14 @@ A lightweight Next.js dashboard with four tabs:
 4. **AI Earnings Analysis** — an AI-capex buyer fragility screen across a small tiered universe
    (Alphabet, Microsoft, Meta, Amazon, Oracle, CoreWeave), scoring whether each is still funding
    infrastructure spend from operating cash flow or increasingly from debt/equity issuance.
+5. **T10Y2Y Regime** — classifies the 10Y-2Y Treasury yield-curve regime (growth vs. term-premium
+   steepening, bull vs. bear flattening) day by day, tracks each regime as a historical episode,
+   and overlays QQQ/TQQQ price action against the regime timeline.
 
 Powered by the [Massive](https://massive.com) (formerly Polygon.io) market data API, plus
 free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inputs (see below).
+The T10Y2Y Regime tab additionally requires a Postgres database — see its own section below; every
+other tab computes its data on demand and needs no database.
 
 ## Tab 1: Intraday Daypart
 
@@ -183,6 +188,52 @@ No charting library, no CSS framework — just React, plain CSS, and hand-rolled
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
 bundle small.
 
+## Tab 5: T10Y2Y Regime Classification
+
+Classifies each trading day's 10Y-2Y Treasury spread move into one of seven regimes and tracks
+each contiguous regime as a historical "episode," overlaid against QQQ/TQQQ price action.
+
+- **Regimes**: spread widening (steepening) splits into **Growth Steepening** (2Y falling faster
+  than 10Y — rate-cut expectations, typically NDX-supportive) vs. **Term Premium Steepening** (10Y
+  rising faster — inflation/fiscal concerns, typically an NDX headwind); spread narrowing
+  (flattening) splits into **Bull Flattening** (10Y falling faster — growth/recession fear,
+  ambiguous for NDX) vs. **Bear Flattening** (2Y rising faster — Fed hiking, classic late-cycle
+  tightening); moves that don't clearly fit either sub-case land in **Steepening (Mixed)** /
+  **Flattening (Mixed)**; moves smaller than the threshold land in **Range-bound / No Signal**.
+  Threshold and lookback default to 5bps change in the spread over 10 trading days
+  (`REGIME_THRESHOLD_BPS` / `REGIME_LOOKBACK_DAYS`).
+- **Data source**: FRED's public `DGS10`/`DGS2` series (no API key, no rate limit) — the same
+  free, key-free convention this app already uses for VIX/USD-index proxies on the Fundamental
+  Analysis tab, extended here to also capture each observation's date. A day only counts toward
+  the regime calculation if both series have a real observation that day; weekends and the bond
+  market's own holiday calendar (which differs slightly from the equity calendar) are excluded
+  rather than forward-filled.
+- **Persistence — the one tab in this app with a database.** Every other tab computes its data
+  fresh on each request; this one is backed by Postgres because its episode table is derived by
+  walking the *entire* yield history, which is too expensive to redo on every page load. See
+  "T10Y2Y Regime database setup" below for the connection string and schema. Data is kept fresh
+  automatically — every read checks whether the newest stored trading day is current and
+  re-fetches/recomputes if not — so correctness never depends on the optional Vercel Cron job
+  (`vercel.json`, hits `/api/yield-regime/refresh` on a schedule) actually firing; that cron is a
+  pre-warming nicety, not a requirement. Backfill starts 2000-01-01 by default (covers QQQ's full
+  trading history), overridable via `REGIME_BACKFILL_START` — FRED itself has `DGS10` data back to
+  1962.
+- **QQQ/TQQQ overlay**: QQQ's % change is precomputed per episode (via Massive's Custom Bars, same
+  `MASSIVE_API_KEY` used elsewhere) during the refresh job and stored as a column on the episode
+  table. TQQQ is available as a chart overlay toggle but deliberately isn't a second episode-table
+  column, to keep that table focused on the regime signal itself rather than TQQQ's own decay
+  characteristics. NDX-100 index-level data isn't used as the equity proxy since Massive's Indices
+  product tier isn't included on this account's current plan (confirmed unavailable, same
+  constraint noted on the Intraday Daypart tab's VIX proxy) — QQQ tracks NDX-100 closely enough,
+  with a small, well-known expense-ratio drag over long lookbacks.
+- **API routes**: `GET /api/yield-regime?range=1Y` (bundled current state + daily series + episode
+  table, self-healing), `GET /api/yield-regime/overlay?symbol=QQQ&range=1Y` (price overlay, lazily
+  fetched only when a toggle is on), `GET /api/yield-regime/refresh` (the cron/manual trigger,
+  protected by `CRON_SECRET` when set).
+
+No charting library here either — the T10Y2Y chart is the same hand-rolled, dependency-free SVG
+approach as the rest of the app (background regime bands, dual-axis for spread vs. price overlay).
+
 ## Project structure
 
 ```
@@ -194,12 +245,17 @@ app/
   api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive + Alpha Vantage
   api/overnight-gap/route.ts  server route: overnight gap view, calls Massive + Finnhub
   api/ai-earnings/route.ts    server route: AI earnings analysis tab, calls Alpha Vantage
+  api/yield-regime/route.ts           server route: T10Y2Y regime tab, reads Postgres (self-healing from FRED)
+  api/yield-regime/overlay/route.ts   server route: QQQ/TQQQ price overlay for the regime chart, calls Massive
+  api/yield-regime/refresh/route.ts   server route: the regime refresh job, triggered by vercel.json's cron or manually
 lib/massive.ts               Massive API client (server-only) + Parkinson volatility calc
 lib/fundamentals.ts          7-metric scoring model + tactical decision logic (server-only)
 lib/catalysts.ts             top-10 list + macro calendar + 1-day reaction calc (server-only)
 lib/overnightGap.ts          close-to-open gap calc + catalyst tagging, reuses catalysts.ts's list/calendar
 lib/aiEarnings.ts            capex fragility screen: fundamentals fetch + cross-sectional scoring (server-only)
-components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis)
+lib/db.ts                    Postgres pool + schema setup (server-only) — used only by the T10Y2Y Regime tab
+lib/yieldRegime.ts           FRED fetch + regime classification + episode roll-up + Postgres read/write (server-only)
+components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis / T10Y2Y Regime)
 components/DaypartPanel.tsx       manages the list of date-range entries (up to 5), the add/remove UI, and the sub-nav to Overnight Gap
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
@@ -212,11 +268,13 @@ components/FundamentalAnalysisPanel.tsx  tactical decision card, gauge, and the 
 components/StrengthGauge.tsx      dependency-free SVG semicircle gauge
 components/CatalystPanel.tsx      top-10 table, reactions table (with filters), upcoming-catalysts table
 components/AIEarningsPanel.tsx    ranked fragility-score table for the AI capex buyer universe
+components/YieldRegimePanel.tsx   current-state panel, range selector + overlay toggles, episode table, collapsible daily detail table
+components/RegimeChart.tsx        dependency-free SVG chart: spread line + regime background bands + QQQ/TQQQ/yield overlays
 ```
 
 The Massive API key is **only ever read server-side** (inside `lib/massive.ts`, used by all
 routes that need it). It is never sent to the browser. FRED's CSV endpoint is public and needs
-no key.
+no key. Postgres (`DATABASE_URL`) is only ever read server-side too (inside `lib/db.ts`).
 
 ## 1. Local setup
 
@@ -249,6 +307,69 @@ FINNHUB_API_KEY=your_finnhub_api_key_here
 
 The app works fine without either — Upcoming Catalysts just won't show Earnings rows, and
 Overnight Gap just won't tag historical earnings dates.
+
+### T10Y2Y Regime database setup (required only for that tab)
+
+Every other tab computes its data fresh on each request; the T10Y2Y Regime tab is the one
+exception — it needs Postgres to store the regime episode history (see the tab's own section
+above for why). Point it at any Postgres instance — a managed one (Vercel Postgres, Neon,
+Supabase, Railway, RDS) or local:
+
+```
+DATABASE_URL=postgres://user:password@host:5432/dbname
+```
+
+The two tables it needs (`yield_regime_daily`, `yield_regime_episodes`) are created automatically
+on first use (`lib/db.ts`'s `ensureRegimeTables()` runs an idempotent `CREATE TABLE IF NOT EXISTS`
+before any query) — no manual migration step required. If you'd rather create them yourself first,
+here's the exact DDL it runs:
+
+```sql
+CREATE TABLE IF NOT EXISTS yield_regime_daily (
+  date DATE PRIMARY KEY,
+  y10 NUMERIC(6,3) NOT NULL,
+  y2 NUMERIC(6,3) NOT NULL,
+  spread NUMERIC(6,3) NOT NULL,
+  d10y NUMERIC(6,3),
+  d2y NUMERIC(6,3),
+  dspread NUMERIC(6,3),
+  regime TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS yield_regime_episodes (
+  id SERIAL PRIMARY KEY,
+  regime TEXT NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE,
+  duration_trading_days INTEGER NOT NULL,
+  spread_change NUMERIC(6,3) NOT NULL,
+  qqq_pct_change NUMERIC(8,4),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS yield_regime_episodes_start_date_idx
+  ON yield_regime_episodes (start_date DESC);
+```
+
+The first request to `/api/yield-regime` after setting `DATABASE_URL` triggers a full backfill
+(FRED history from `REGIME_BACKFILL_START`, default 2000-01-01, through today) — this can take a
+few seconds the very first time since it also fetches QQQ's full daily history from Massive to
+compute each episode's % change, but every subsequent load is fast (it only recomputes when the
+newest stored trading day isn't current). Optionally, also set:
+
+```
+CRON_SECRET=some_random_string
+```
+
+...and add the matching value to your Vercel project's Environment Variables — this lets
+`vercel.json`'s daily cron job (`/api/yield-regime/refresh`) authenticate, so the first visitor
+each day doesn't wait on that day's backfill. It's optional: the read path (`ensureFreshRegimeData`
+in `lib/yieldRegime.ts`) self-heals stale data regardless of whether the cron ever fires.
+
+Every other tab works with no `DATABASE_URL` at all — omitting it just means the T10Y2Y Regime
+tab shows a red error box (see "Troubleshooting" below) while every other tab is unaffected.
 
 Then run the dev server:
 
@@ -360,6 +481,24 @@ excludes it.
   Look for a top-level `"Information"` or `"Note"` field in the JSON — that's Alpha Vantage's
   rate-limit/quota message, not real data, and the app's logs call this out per-ticker rather
   than silently treating it as "no earnings."
+- **T10Y2Y Regime tab shows a red error box** — almost always `DATABASE_URL` isn't set for the
+  environment serving the request (this is the one tab in the app that needs it; every other tab
+  is unaffected). Confirm it's set for the right Vercel environment (Production vs. Preview are
+  separate) and that you redeployed after adding it. If `DATABASE_URL` is set but you still see an
+  error, check **Vercel → your project → Logs**, filter to the `/api/yield-regime` function, and
+  look for a `[yield-regime]` line — `refreshRegimeData`/`ensureFreshRegimeData` in
+  `lib/yieldRegime.ts` log exactly what failed (FRED fetch, Postgres connection, or the QQQ
+  overlay fetch for episode % changes). Test the Postgres connection directly with `psql
+  "$DATABASE_URL" -c "select 1"`, and confirm FRED itself is reachable with:
+  ```bash
+  curl "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10" | head -3
+  ```
+- **T10Y2Y Regime tab loads but the episode table is empty while the daily detail table has
+  rows** — this means the regime computation ran but every day so far falls in the first
+  `REGIME_LOOKBACK_DAYS` rows of your configured `REGIME_BACKFILL_START` (which have no
+  `regime` yet, since there isn't enough trailing history for a lookback comparison) — wait for
+  more days to accumulate, or move `REGIME_BACKFILL_START` earlier so there's already 10+ trading
+  days of history before the range you care about.
 
 Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
 price/volume data, plus Alpha Vantage's free `EARNINGS_CALENDAR` and `EARNINGS` endpoints for
@@ -381,3 +520,11 @@ TQQQ, top 10) over the ~240-day lookback — same Stocks Starter entitlement alr
 elsewhere, no new plan tier. It also makes one Finnhub call (historical earnings, unrelated to
 Catalyst Tracker's Alpha Vantage-based upcoming-earnings call) — same free API key already set up
 for that, no extra signup.
+
+**Cost/rate-limit note for T10Y2Y Regime**: FRED's `DGS10`/`DGS2` CSV endpoints have no published
+rate limit and need no API key, so the daily refresh (whether triggered by the cron or by a
+stale-data read) costs nothing there. The refresh also fetches QQQ's full daily history once
+(same Stocks Starter entitlement as everywhere else) to compute each episode's % change — cheap,
+but the *first* backfill after setting `DATABASE_URL` fetches QQQ's entire history since
+`REGIME_BACKFILL_START`, which is the slowest part of that one-time run. Every subsequent refresh
+only recomputes when there's a genuinely new trading day.
