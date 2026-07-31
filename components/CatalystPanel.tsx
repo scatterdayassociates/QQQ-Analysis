@@ -29,9 +29,14 @@ function pctClass(v: number | null): string {
   return v >= 0 ? "up" : "down";
 }
 
-function formatPeRatio(v: number | null): string {
-  return v === null ? "—" : v.toFixed(1);
+function formatEvToEbitda(v: number | null): string {
+  return v === null ? "—" : `${v.toFixed(1)}x`;
 }
+
+const EV_TO_EBITDA_TOOLTIP =
+  "EV/EBITDA = Enterprise Value ÷ EBITDA (earnings before interest, taxes, depreciation & amortization). " +
+  "Unlike P/E, it accounts for debt and cash on the balance sheet and ignores differences in depreciation/" +
+  "capital structure across companies — a more comparable valuation multiple across the top-10 names here.";
 
 function formatDaysUntilEarnings(v: number | null): string {
   if (v === null) return "—";
@@ -105,7 +110,7 @@ export default function CatalystPanel() {
                     <th>Change</th>
                     <th>Volume</th>
                     <th>Market Cap</th>
-                    <th>P/E Ratio</th>
+                    <th title={EV_TO_EBITDA_TOOLTIP}>EV/EBITDA</th>
                     <th>Days Till Earnings</th>
                   </tr>
                 </thead>
@@ -118,7 +123,7 @@ export default function CatalystPanel() {
                       <td className={pctClass(c.changePct)}>{formatPct(c.changePct)}</td>
                       <td>{formatVolume(c.volume)}</td>
                       <td>{formatMarketCap(c.marketCap)}</td>
-                      <td>{formatPeRatio(c.peRatio)}</td>
+                      <td>{formatEvToEbitda(c.evToEbitda)}</td>
                       <td>{formatDaysUntilEarnings(c.daysUntilEarnings)}</td>
                     </tr>
                   ))}
@@ -225,9 +230,13 @@ export default function CatalystPanel() {
         continuously-rebalanced live ranking, since weights drift with price and the index rebalances
         quarterly. Price, change, and volume come from Massive&apos;s Custom Bars endpoint; market cap
         comes from Massive&apos;s Ticker Details (reference) endpoint and shows “—” if unavailable on the
-        current plan. <strong>P/E Ratio</strong> is trailing P/E from Alpha Vantage&apos;s{" "}
-        <code>OVERVIEW</code> endpoint (one request per ticker, same key as the rest of this tab) and
-        shows “—” for unprofitable companies (negative trailing EPS) or if unavailable.{" "}
+        current plan. <strong>EV/EBITDA</strong> (Enterprise Value ÷ EBITDA) comes from Alpha
+        Vantage&apos;s <code>OVERVIEW</code> endpoint (one request per ticker, same key as the rest of
+        this tab, replacing the P/E Ratio column previously here) and shows “—” when EBITDA is negative
+        or unavailable. Unlike P/E, it factors in each company&apos;s debt and cash and isn&apos;t
+        distorted by differences in depreciation or capital structure, making it a more
+        apples-to-apples valuation multiple across these ten names — hover the column header for the
+        same definition inline.{" "}
         <strong>Days Till Earnings</strong> is each ticker&apos;s next scheduled report
         date (from Alpha Vantage, same source as Upcoming Catalysts) minus today&apos;s date, and shows
         “—” if no report is scheduled within the lookahead window or Alpha Vantage isn&apos;t configured.

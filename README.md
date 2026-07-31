@@ -108,9 +108,12 @@ earnings dates), and an upcoming-catalysts calendar.
   app's placeholder-style calendar.
 - **Market cap** is attempted via Massive's Ticker Details (reference) endpoint and shows "—" if
   unavailable on the current plan, rather than failing the whole table.
-- **P/E Ratio** (trailing) comes from Alpha Vantage's `OVERVIEW` endpoint — one request per
-  ticker (10 total, no bulk mode), cached 1 hour. Shows "—" for unprofitable companies (negative
-  trailing EPS) or if unavailable.
+- **EV/EBITDA** (Enterprise Value ÷ EBITDA) comes from Alpha Vantage's `OVERVIEW` endpoint — one
+  request per ticker (10 total, no bulk mode), cached 1 hour. Shows "—" when EBITDA is negative or
+  unavailable. Chosen over P/E (which this column showed originally) since it accounts for each
+  company's debt/cash and isn't distorted by differences in depreciation or capital structure,
+  making it more comparable across the ten names here — the column header carries the same
+  definition as a hover tooltip.
 - **Upcoming earnings** for each top-10 ticker come from [Alpha Vantage's](https://www.alphavantage.co)
   free `EARNINGS_CALENDAR` endpoint — officially documented, free-tier accessible, returns CSV
   (not JSON, unlike most Alpha Vantage endpoints). Requires a free account and an
@@ -159,9 +162,10 @@ infrastructure spend from operating cash flow or increasingly from debt/equity i
   direction), buyback Δ YoY (a cut is often the first lever pulled before touching capex), and a
   composite **Fragility Score** — a cross-sectional z-scored blend of all four, self-calibrating
   as tickers are added (no hardcoded thresholds).
-- **P/E Ratio** (trailing), same source and behavior as Catalyst Tracker's column above — Alpha
-  Vantage's `OVERVIEW` endpoint, one request per ticker, cached 1 hour. A valuation reference
-  alongside the fragility metrics, not itself part of the Fragility Score.
+- **P/E Ratio** (trailing) comes from Alpha Vantage's `OVERVIEW` endpoint, one request per ticker,
+  cached 1 hour, same endpoint Catalyst Tracker's EV/EBITDA column above also uses (different field
+  from the same response). A valuation reference alongside the fragility metrics, not itself part
+  of the Fragility Score.
 - **Data source**: Alpha Vantage's `CASH_FLOW` and `INCOME_STATEMENT` endpoints (same
   `ALPHA_VANTAGE_API_KEY` already used elsewhere — no new key needed). Unlike everything else in
   this app, these have no bulk mode: **2 requests per ticker, 12 total per load (18 with P/E

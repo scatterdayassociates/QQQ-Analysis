@@ -216,27 +216,31 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
 }
 
 interface AlphaVantageOverviewResponse {
-  PERatio?: string;
+  EVToEBITDA?: string;
   Information?: string;
   Note?: string;
 }
 
 /**
  * Alpha Vantage's OVERVIEW endpoint (function=OVERVIEW&symbol=X) — the
- * source for trailing P/E, since neither Massive endpoint already used in
- * this file carries a P/E figure. Like EARNINGS above, no bulk mode: one
- * request per ticker. PERatio comes back as the literal string "None" for
- * unprofitable companies (negative trailing EPS) — those show "—" in the UI
- * rather than a misleading number. Cached for 1 hour, same as the upcoming
+ * source for EV/EBITDA, since neither Massive endpoint already used in this
+ * file carries a valuation multiple. Like EARNINGS above, no bulk mode: one
+ * request per ticker. EVToEBITDA comes back as the literal string "None"
+ * when EBITDA is negative/unavailable — those show "—" in the UI rather
+ * than a misleading number. Cached for 1 hour, same as the upcoming
  * earnings lookup above, since it's a valuation ratio rather than a
- * slow-moving fundamental.
+ * slow-moving fundamental. Previously this fetched PERatio (P/E) instead —
+ * swapped for EV/EBITDA per request, since it's capital-structure-neutral
+ * (accounts for debt/cash, unlike P/E) and comparable across companies with
+ * different leverage — arguably the more useful cross-sectional valuation
+ * metric for a top-10-by-weight comparison table like this one.
  */
-async function getPeRatiosByTicker(tickers: string[]): Promise<Map<string, number>> {
+async function getEvToEbitdaByTicker(tickers: string[]): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
   if (!apiKey) {
-    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping P/E ratio lookup.");
+    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping EV/EBITDA lookup.");
     return result;
   }
 
@@ -259,15 +263,15 @@ async function getPeRatiosByTicker(tickers: string[]): Promise<Map<string, numbe
           );
           return;
         }
-        const pe = Number(data.PERatio);
-        if (data.PERatio && data.PERatio !== "None" && Number.isFinite(pe)) result.set(ticker, pe);
+        const evToEbitda = Number(data.EVToEBITDA);
+        if (data.EVToEBITDA && data.EVToEBITDA !== "None" && Number.isFinite(evToEbitda)) result.set(ticker, evToEbitda);
       } catch (err) {
         console.error(`[catalysts] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
       }
     })
   );
 
-  console.error(`[catalysts] Alpha Vantage P/E ratios: ${result.size}/${tickers.length} tickers returned a value.`);
+  console.error(`[catalysts] Alpha Vantage EV/EBITDA: ${result.size}/${tickers.length} tickers returned a value.`);
   return result;
 }
 
@@ -342,7 +346,7 @@ export interface CatalystComponent {
   changePct: number | null;
   volume: number | null;
   marketCap: number | null;
-  peRatio: number | null; // trailing P/E, null if unprofitable (negative EPS) or unavailable
+  evToEbitda: number | null; // enterprise value / EBITDA, null if negative EBITDA or unavailable
   daysUntilEarnings: number | null; // next scheduled earnings date minus today; null if unavailable
 }
 
@@ -382,12 +386,12 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  const [barsByTicker, marketCaps, peRatiosByTicker, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
+  const [barsByTicker, marketCaps, evToEbitdaByTicker, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
     Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
-    getPeRatiosByTicker(tickers),
+    getEvToEbitdaByTicker(tickers),
     getUpcomingEarningsMap(tickers, "3month"),
     getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr),
   ]);
@@ -409,7 +413,7 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
       changePct,
       volume: latest?.v ?? null,
       marketCap: marketCaps[i],
-      peRatio: peRatiosByTicker.get(c.ticker) ?? null,
+      evToEbitda: evToEbitdaByTicker.get(c.ticker) ?? null,
       daysUntilEarnings: nextEarningsDate ? daysUntil(nextEarningsDate) : null,
     };
   });
