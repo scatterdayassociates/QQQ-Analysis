@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refreshRegimeData } from "@/lib/yieldRegime";
 
-export const dynamic = "force-dynamic"; // this route writes to Postgres — never let it be treated as a cacheable/static response
+export const dynamic = "force-dynamic"; // this route writes to MySQL — never let it be treated as a cacheable/static response
 
 /**
  * Manual/cron trigger for the regime refresh job. In practice this is a

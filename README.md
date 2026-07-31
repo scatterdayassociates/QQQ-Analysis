@@ -18,7 +18,7 @@ A lightweight Next.js dashboard with five tabs:
 
 Powered by the [Massive](https://massive.com) (formerly Polygon.io) market data API, plus
 free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inputs (see below).
-The T10Y2Y Regime tab additionally requires a Postgres database — see its own section below; every
+The T10Y2Y Regime tab additionally requires a MySQL database — see its own section below; every
 other tab computes its data on demand and needs no database.
 
 ## Tab 1: Intraday Daypart
@@ -209,7 +209,7 @@ each contiguous regime as a historical "episode," overlaid against QQQ/TQQQ pric
   market's own holiday calendar (which differs slightly from the equity calendar) are excluded
   rather than forward-filled.
 - **Persistence — the one tab in this app with a database.** Every other tab computes its data
-  fresh on each request; this one is backed by Postgres because its episode table is derived by
+  fresh on each request; this one is backed by MySQL because its episode table is derived by
   walking the *entire* yield history, which is too expensive to redo on every page load. See
   "T10Y2Y Regime database setup" below for the connection string and schema. Data is kept fresh
   automatically — every read checks whether the newest stored trading day is current and
@@ -245,7 +245,7 @@ app/
   api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive + Alpha Vantage
   api/overnight-gap/route.ts  server route: overnight gap view, calls Massive + Finnhub
   api/ai-earnings/route.ts    server route: AI earnings analysis tab, calls Alpha Vantage
-  api/yield-regime/route.ts           server route: T10Y2Y regime tab, reads Postgres (self-healing from FRED)
+  api/yield-regime/route.ts           server route: T10Y2Y regime tab, reads MySQL (self-healing from FRED)
   api/yield-regime/overlay/route.ts   server route: QQQ/TQQQ price overlay for the regime chart, calls Massive
   api/yield-regime/refresh/route.ts   server route: the regime refresh job, triggered by vercel.json's cron or manually
 lib/massive.ts               Massive API client (server-only) + Parkinson volatility calc
@@ -253,8 +253,8 @@ lib/fundamentals.ts          7-metric scoring model + tactical decision logic (s
 lib/catalysts.ts             top-10 list + macro calendar + 1-day reaction calc (server-only)
 lib/overnightGap.ts          close-to-open gap calc + catalyst tagging, reuses catalysts.ts's list/calendar
 lib/aiEarnings.ts            capex fragility screen: fundamentals fetch + cross-sectional scoring (server-only)
-lib/db.ts                    Postgres pool + schema setup (server-only) — used only by the T10Y2Y Regime tab
-lib/yieldRegime.ts           FRED fetch + regime classification + episode roll-up + Postgres read/write (server-only)
+lib/db.ts                    MySQL pool + schema setup (server-only) — used only by the T10Y2Y Regime tab
+lib/yieldRegime.ts           FRED fetch + regime classification + episode roll-up + MySQL read/write (server-only)
 components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis / T10Y2Y Regime)
 components/DaypartPanel.tsx       manages the list of date-range entries (up to 5), the add/remove UI, and the sub-nav to Overnight Gap
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
@@ -274,7 +274,7 @@ components/RegimeChart.tsx        dependency-free SVG chart: spread line + regim
 
 The Massive API key is **only ever read server-side** (inside `lib/massive.ts`, used by all
 routes that need it). It is never sent to the browser. FRED's CSV endpoint is public and needs
-no key. Postgres (`DATABASE_URL`) is only ever read server-side too (inside `lib/db.ts`).
+no key. MySQL (`DATABASE_URL`) is only ever read server-side too (inside `lib/db.ts`).
 
 ## 1. Local setup
 
@@ -311,46 +311,73 @@ Overnight Gap just won't tag historical earnings dates.
 ### T10Y2Y Regime database setup (required only for that tab)
 
 Every other tab computes its data fresh on each request; the T10Y2Y Regime tab is the one
-exception — it needs Postgres to store the regime episode history (see the tab's own section
-above for why). Point it at any Postgres instance — a managed one (Vercel Postgres, Neon,
-Supabase, Railway, RDS) or local:
+exception — it needs MySQL to store the regime episode history (see the tab's own section above
+for why). Point it at any MySQL 8 instance — a managed one (DigitalOcean, PlanetScale, RDS) or
+local — via a single connection-string env var:
 
 ```
-DATABASE_URL=postgres://user:password@host:5432/dbname
+DATABASE_URL=mysql://user:password@host:3306/dbname
 ```
+
+#### Step by step, using a DigitalOcean Managed MySQL database
+
+1. In the DigitalOcean control panel (or a client like DbVisualizer, TablePlus, MySQL Workbench),
+   confirm your cluster's connection details — **Host**, **Port**, **Database** (DigitalOcean
+   defaults this to `defaultdb`), **Username** (defaults to `doadmin`), and **Password**. DbVisualizer
+   shows these under the connection's **Connection** tab (Database Server / Database Port /
+   Database / Database Userid / Database Password).
+2. Build your `DATABASE_URL` from those four pieces, URL-encoding the password if it contains
+   special characters (`@`, `:`, `/`, etc. — DigitalOcean's generated passwords usually don't, but
+   check):
+   ```
+   DATABASE_URL=mysql://doadmin:YOUR_PASSWORD@your-cluster-host.db.ondigitalocean.com:25060/defaultdb
+   ```
+   (DigitalOcean's default MySQL port is `25060`, not the usual `3306` — use whatever port your
+   cluster's connection details actually show.)
+3. Add that line to `.env.local` for local development, and add `DATABASE_URL` as an Environment
+   Variable in your Vercel project (Production and Preview both, if you use both) for the deployed
+   app.
+4. That's it — no separate "create database" step needed. DigitalOcean's managed MySQL always
+   provisions a `defaultdb` database and a `doadmin` user with full privileges on it, which is all
+   `CREATE TABLE`/`INSERT`/`SELECT` on the two tables below needs. SSL is mandatory on DigitalOcean's
+   managed MySQL; `lib/db.ts` already sends `ssl: { rejectUnauthorized: false }` for any non-`localhost`
+   `DATABASE_URL`, which satisfies that requirement without needing DigitalOcean's downloadable CA
+   certificate.
+5. Start the app (`npm run dev` locally, or open the deployed Vercel URL) and load the **T10Y2Y
+   Regime** tab — the first request creates both tables and runs the initial FRED/QQQ backfill
+   automatically (see below).
 
 The two tables it needs (`yield_regime_daily`, `yield_regime_episodes`) are created automatically
-on first use (`lib/db.ts`'s `ensureRegimeTables()` runs an idempotent `CREATE TABLE IF NOT EXISTS`
-before any query) — no manual migration step required. If you'd rather create them yourself first,
-here's the exact DDL it runs:
+on first use (`lib/db.ts`'s `ensureRegimeTables()` runs idempotent `CREATE TABLE IF NOT EXISTS`
+statements before any query) — no manual migration step required. If you'd rather create them
+yourself first (e.g. by running this directly in DbVisualizer's SQL editor against the connection
+in your screenshot), here's the exact DDL it runs:
 
 ```sql
 CREATE TABLE IF NOT EXISTS yield_regime_daily (
-  date DATE PRIMARY KEY,
-  y10 NUMERIC(6,3) NOT NULL,
-  y2 NUMERIC(6,3) NOT NULL,
-  spread NUMERIC(6,3) NOT NULL,
-  d10y NUMERIC(6,3),
-  d2y NUMERIC(6,3),
-  dspread NUMERIC(6,3),
-  regime TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  `date` DATE PRIMARY KEY,
+  y10 DECIMAL(6,3) NOT NULL,
+  y2 DECIMAL(6,3) NOT NULL,
+  spread DECIMAL(6,3) NOT NULL,
+  d10y DECIMAL(6,3),
+  d2y DECIMAL(6,3),
+  dspread DECIMAL(6,3),
+  regime VARCHAR(64),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS yield_regime_episodes (
-  id SERIAL PRIMARY KEY,
-  regime TEXT NOT NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  regime VARCHAR(64) NOT NULL,
   start_date DATE NOT NULL,
   end_date DATE,
-  duration_trading_days INTEGER NOT NULL,
-  spread_change NUMERIC(6,3) NOT NULL,
-  qqq_pct_change NUMERIC(8,4),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  duration_trading_days INT NOT NULL,
+  spread_change DECIMAL(6,3) NOT NULL,
+  qqq_pct_change DECIMAL(8,4),
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX yield_regime_episodes_start_date_idx (start_date DESC)
 );
-
-CREATE INDEX IF NOT EXISTS yield_regime_episodes_start_date_idx
-  ON yield_regime_episodes (start_date DESC);
 ```
 
 The first request to `/api/yield-regime` after setting `DATABASE_URL` triggers a full backfill
@@ -487,9 +514,11 @@ excludes it.
   separate) and that you redeployed after adding it. If `DATABASE_URL` is set but you still see an
   error, check **Vercel → your project → Logs**, filter to the `/api/yield-regime` function, and
   look for a `[yield-regime]` line — `refreshRegimeData`/`ensureFreshRegimeData` in
-  `lib/yieldRegime.ts` log exactly what failed (FRED fetch, Postgres connection, or the QQQ
-  overlay fetch for episode % changes). Test the Postgres connection directly with `psql
-  "$DATABASE_URL" -c "select 1"`, and confirm FRED itself is reachable with:
+  `lib/yieldRegime.ts` log exactly what failed (FRED fetch, MySQL connection, or the QQQ overlay
+  fetch for episode % changes). Test the MySQL connection directly with the `mysql` CLI (parse your
+  `DATABASE_URL` into its pieces, e.g. for DigitalOcean:
+  `mysql -h your-cluster-host.db.ondigitalocean.com -P 25060 -u doadmin -p --ssl-mode=REQUIRED defaultdb -e "select 1"`),
+  and confirm FRED itself is reachable with:
   ```bash
   curl "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10" | head -3
   ```

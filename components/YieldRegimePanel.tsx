@@ -407,7 +407,7 @@ export default function YieldRegimePanel() {
           connects across those gaps.
         </p>
         <p>
-          <strong>Persistence.</strong> Unlike every other tab in this app, this one is backed by Postgres
+          <strong>Persistence.</strong> Unlike every other tab in this app, this one is backed by MySQL
           (the only tab with any persistent state) — the episode table is derived by walking the entire yield
           history, which is too expensive to redo on every page load. Data is kept fresh automatically: every
           load checks whether the newest stored trading day is current and re-fetches/recomputes if not, so

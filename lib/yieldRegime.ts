@@ -5,7 +5,7 @@
 // action so regime shifts can be visually cross-referenced against equity
 // direction.
 //
-// Unlike every other tab in this app, this one is backed by Postgres (see
+// Unlike every other tab in this app, this one is backed by MySQL (see
 // lib/db.ts) rather than computed fresh on every request — the "episode"
 // table (one row per contiguous regime, with its QQQ performance) is
 // derived by walking the *entire* yield history, which is too expensive to
@@ -253,19 +253,21 @@ const DAILY_UPSERT_CHUNK = 500;
 async function upsertDailyRows(rows: DailyRegimeRow[]): Promise<void> {
   for (let i = 0; i < rows.length; i += DAILY_UPSERT_CHUNK) {
     const chunk = rows.slice(i, i + DAILY_UPSERT_CHUNK);
-    const values: string[] = [];
+    const placeholders: string[] = [];
     const params: unknown[] = [];
-    chunk.forEach((r, idx) => {
-      const base = idx * 8;
-      values.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8})`);
+    chunk.forEach((r) => {
+      placeholders.push("(?,?,?,?,?,?,?,?)");
       params.push(r.date, r.y10, r.y2, r.spread, r.d10y, r.d2y, r.dspread, r.regime);
     });
+    // VALUES(col) (rather than the newer MySQL 8.0.19+ row-alias syntax) is
+    // used for the widest compatibility across managed MySQL 8.0.x
+    // providers — deprecated but not removed as of 8.0.x.
     await query(
-      `INSERT INTO yield_regime_daily (date, y10, y2, spread, d10y, d2y, dspread, regime)
-       VALUES ${values.join(",")}
-       ON CONFLICT (date) DO UPDATE SET
-         y10 = EXCLUDED.y10, y2 = EXCLUDED.y2, spread = EXCLUDED.spread,
-         d10y = EXCLUDED.d10y, d2y = EXCLUDED.d2y, dspread = EXCLUDED.dspread, regime = EXCLUDED.regime`,
+      `INSERT INTO yield_regime_daily (\`date\`, y10, y2, spread, d10y, d2y, dspread, regime)
+       VALUES ${placeholders.join(",")}
+       ON DUPLICATE KEY UPDATE
+         y10 = VALUES(y10), y2 = VALUES(y2), spread = VALUES(spread),
+         d10y = VALUES(d10y), d2y = VALUES(d2y), dspread = VALUES(dspread), regime = VALUES(regime)`,
       params
     );
   }
@@ -279,16 +281,15 @@ async function replaceEpisodes(episodes: RegimeEpisode[]): Promise<void> {
     for (let i = 0; i < episodes.length; i += EPISODE_INSERT_CHUNK) {
       const chunk = episodes.slice(i, i + EPISODE_INSERT_CHUNK);
       if (chunk.length === 0) continue;
-      const values: string[] = [];
+      const placeholders: string[] = [];
       const params: unknown[] = [];
-      chunk.forEach((ep, idx) => {
-        const base = idx * 6;
-        values.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6})`);
+      chunk.forEach((ep) => {
+        placeholders.push("(?,?,?,?,?,?)");
         params.push(ep.regime, ep.startDate, ep.endDate, ep.durationTradingDays, ep.spreadChange, ep.qqqPctChange);
       });
       await txQuery(
         `INSERT INTO yield_regime_episodes (regime, start_date, end_date, duration_trading_days, spread_change, qqq_pct_change)
-         VALUES ${values.join(",")}`,
+         VALUES ${placeholders.join(",")}`,
         params
       );
     }
@@ -302,7 +303,7 @@ let refreshInFlight: Promise<{ daysWritten: number; episodesWritten: number }> |
  * The "daily job" from the spec, reframed as an idempotent function rather
  * than a standalone script: fetch full FRED history, recompute the regime
  * classification and episode table from scratch, and upsert both into
- * Postgres. Recomputing everything (rather than an incremental delta) is
+ * MySQL. Recomputing everything (rather than an incremental delta) is
  * deliberately simple — the full DGS10/DGS2-since-2000 history is only a
  * few thousand rows, trivial to reprocess in-memory every time, and this
  * sidesteps an entire class of incremental-update bugs (e.g. a late-arriving
@@ -345,8 +346,8 @@ export async function refreshRegimeData(): Promise<{ daysWritten: number; episod
  */
 export async function ensureFreshRegimeData(): Promise<void> {
   await ensureRegimeTables();
-  const rows = await query<{ date: string }>("SELECT date::text FROM yield_regime_daily ORDER BY date DESC LIMIT 1");
-  const latest = rows[0]?.date ?? null;
+  const rows = await query("SELECT `date` FROM yield_regime_daily ORDER BY `date` DESC LIMIT 1");
+  const latest = (rows[0]?.date as string | undefined) ?? null;
   const todayStr = toDateStr(new Date());
   const yesterdayStr = toDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
@@ -379,27 +380,25 @@ export interface RegimeCurrentState {
 }
 
 export async function getCurrentRegimeState(): Promise<RegimeCurrentState> {
-  const latestRows = await query<{ date: string; spread: string; y10: string; y2: string; regime: string | null }>(
-    "SELECT date::text, spread, y10, y2, regime FROM yield_regime_daily ORDER BY date DESC LIMIT 1"
-  );
+  const latestRows = await query("SELECT `date`, spread, y10, y2, regime FROM yield_regime_daily ORDER BY `date` DESC LIMIT 1");
   const latest = latestRows[0];
   if (!latest) {
     return { asOfDate: null, spread: null, y10: null, y2: null, regime: null, regimeStartDate: null, daysInRegime: null };
   }
 
-  const episodeRows = await query<{ regime: string; start_date: string; duration_trading_days: number }>(
-    "SELECT regime, start_date::text, duration_trading_days FROM yield_regime_episodes WHERE end_date IS NULL ORDER BY start_date DESC LIMIT 1"
+  const episodeRows = await query(
+    "SELECT regime, start_date, duration_trading_days FROM yield_regime_episodes WHERE end_date IS NULL ORDER BY start_date DESC LIMIT 1"
   );
   const currentEpisode = episodeRows[0];
 
   return {
-    asOfDate: latest.date,
+    asOfDate: latest.date as string,
     spread: Number(latest.spread),
     y10: Number(latest.y10),
     y2: Number(latest.y2),
     regime: (latest.regime as RegimeLabel | null) ?? null,
-    regimeStartDate: currentEpisode?.start_date ?? null,
-    daysInRegime: currentEpisode?.duration_trading_days ?? null,
+    regimeStartDate: (currentEpisode?.start_date as string | undefined) ?? null,
+    daysInRegime: (currentEpisode?.duration_trading_days as number | undefined) ?? null,
   };
 }
 
@@ -414,25 +413,16 @@ const RANGE_TO_DAYS: Record<string, number | null> = {
 
 export async function getRegimeSeries(range: string): Promise<DailyRegimeRow[]> {
   const calendarDays = RANGE_TO_DAYS[range] ?? RANGE_TO_DAYS["1Y"];
-  const rows = await query<{
-    date: string;
-    y10: string;
-    y2: string;
-    spread: string;
-    d10y: string | null;
-    d2y: string | null;
-    dspread: string | null;
-    regime: string | null;
-  }>(
+  const rows = await query(
     calendarDays === null
-      ? "SELECT date::text, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily ORDER BY date ASC"
-      : `SELECT date::text, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily
-         WHERE date >= (CURRENT_DATE - $1::int) ORDER BY date ASC`,
+      ? "SELECT `date`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily ORDER BY `date` ASC"
+      : `SELECT \`date\`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily
+         WHERE \`date\` >= DATE_SUB(CURDATE(), INTERVAL ? DAY) ORDER BY \`date\` ASC`,
     calendarDays === null ? undefined : [calendarDays]
   );
 
   return rows.map((r) => ({
-    date: r.date,
+    date: r.date as string,
     y10: Number(r.y10),
     y2: Number(r.y2),
     spread: Number(r.spread),
@@ -444,22 +434,15 @@ export async function getRegimeSeries(range: string): Promise<DailyRegimeRow[]> 
 }
 
 export async function getRegimeEpisodes(): Promise<RegimeEpisode[]> {
-  const rows = await query<{
-    regime: string;
-    start_date: string;
-    end_date: string | null;
-    duration_trading_days: number;
-    spread_change: string;
-    qqq_pct_change: string | null;
-  }>(
-    "SELECT regime, start_date::text, end_date::text, duration_trading_days, spread_change, qqq_pct_change FROM yield_regime_episodes ORDER BY start_date DESC"
+  const rows = await query(
+    "SELECT regime, start_date, end_date, duration_trading_days, spread_change, qqq_pct_change FROM yield_regime_episodes ORDER BY start_date DESC"
   );
 
   return rows.map((r) => ({
     regime: r.regime as RegimeLabel,
-    startDate: r.start_date,
-    endDate: r.end_date,
-    durationTradingDays: r.duration_trading_days,
+    startDate: r.start_date as string,
+    endDate: (r.end_date as string | null) ?? null,
+    durationTradingDays: r.duration_trading_days as number,
     spreadChange: Number(r.spread_change),
     qqqPctChange: r.qqq_pct_change === null ? null : Number(r.qqq_pct_change),
   }));

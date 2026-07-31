@@ -9,14 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "mysql2": "^3.23.2",
     "next": "16.2.10",
-    "pg": "^8.22.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",
-    "@types/pg": "^8.20.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.1",
     "typescript": "^5.5.3"
