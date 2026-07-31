@@ -3,7 +3,7 @@ import { getOverlaySeries } from "@/lib/yieldRegime";
 
 export const revalidate = 3600; // daily bars, not intraday — same convention as the Catalyst Tracker top-10 table
 
-const VALID_RANGES = new Set(["1M", "3M", "6M", "1Y", "5Y", "Max"]);
+const VALID_RANGES = new Set(["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "Max"]);
 const VALID_SYMBOLS = new Set(["QQQ", "TQQQ"]);
 
 export async function GET(req: NextRequest) {

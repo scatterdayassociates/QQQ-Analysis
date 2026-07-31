@@ -411,15 +411,37 @@ const RANGE_TO_DAYS: Record<string, number | null> = {
   Max: null,
 };
 
+// "1D"/"5D" are trading-day counts, not calendar-day cutoffs — this data is
+// fundamentally daily granularity (FRED doesn't publish intraday Treasury
+// yields, so there's no minute-level view to show like the Daypart tab's),
+// so these two ranges just mean "the most recent 1 (or 5) trading-day rows
+// already in yield_regime_daily," trimmed by row count rather than a
+// calendar window so a Friday/Monday boundary doesn't return 0-2 rows
+// unpredictably the way a 1-2 calendar-day cutoff would.
+const RANGE_ROW_LIMITS: Record<string, number> = {
+  "1D": 1,
+  "5D": 5,
+};
+
 export async function getRegimeSeries(range: string): Promise<DailyRegimeRow[]> {
-  const calendarDays = RANGE_TO_DAYS[range] ?? RANGE_TO_DAYS["1Y"];
-  const rows = await query(
-    calendarDays === null
-      ? "SELECT `date`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily ORDER BY `date` ASC"
-      : `SELECT \`date\`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily
-         WHERE \`date\` >= DATE_SUB(CURDATE(), INTERVAL ? DAY) ORDER BY \`date\` ASC`,
-    calendarDays === null ? undefined : [calendarDays]
-  );
+  const rowLimit = RANGE_ROW_LIMITS[range];
+  const calendarDays = rowLimit === undefined ? (RANGE_TO_DAYS[range] ?? RANGE_TO_DAYS["1Y"]) : undefined;
+
+  const rows =
+    rowLimit !== undefined
+      ? (
+          await query(
+            "SELECT `date`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily ORDER BY `date` DESC LIMIT ?",
+            [rowLimit]
+          )
+        ).reverse()
+      : await query(
+          calendarDays === null
+            ? "SELECT `date`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily ORDER BY `date` ASC"
+            : `SELECT \`date\`, y10, y2, spread, d10y, d2y, dspread, regime FROM yield_regime_daily
+               WHERE \`date\` >= DATE_SUB(CURDATE(), INTERVAL ? DAY) ORDER BY \`date\` ASC`,
+          calendarDays === null ? undefined : [calendarDays]
+        );
 
   return rows.map((r) => ({
     date: r.date as string,
@@ -460,8 +482,19 @@ export interface OverlayPoint {
  * closes, not a derived/expensive computation like the regime episodes.
  */
 export async function getOverlaySeries(symbol: "QQQ" | "TQQQ", range: string): Promise<OverlayPoint[]> {
-  const calendarDays = RANGE_TO_DAYS[range] ?? RANGE_TO_DAYS["1Y"];
+  const rowLimit = RANGE_ROW_LIMITS[range];
   const to = new Date();
+
+  if (rowLimit !== undefined) {
+    // Fetch a generous calendar buffer (weekends/holidays mean N trading
+    // days can span more than N calendar days) then keep just the last
+    // rowLimit bars — getCustomBars already returns them sorted ascending.
+    const from = new Date(Date.now() - (rowLimit + 10) * 24 * 60 * 60 * 1000);
+    const bars = await getCustomBars(symbol, { timespan: "day", from: toDateStr(from), to: toDateStr(to) });
+    return bars.slice(-rowLimit).map((b) => ({ date: toDateStr(new Date(b.t)), close: b.c }));
+  }
+
+  const calendarDays = RANGE_TO_DAYS[range] ?? RANGE_TO_DAYS["1Y"];
   const from = calendarDays === null ? new Date(REGIME_BACKFILL_START) : new Date(Date.now() - calendarDays * 24 * 60 * 60 * 1000);
   const bars = await getCustomBars(symbol, { timespan: "day", from: toDateStr(from), to: toDateStr(to) });
   return bars.map((b) => ({ date: toDateStr(new Date(b.t)), close: b.c }));

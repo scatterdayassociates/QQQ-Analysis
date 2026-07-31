@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DailyRegimeRow, OverlayPoint, RegimeCurrentState, RegimeEpisode, RegimeLabel } from "@/lib/yieldRegime";
 import RegimeChart, { regimeSlug } from "./RegimeChart";
 
-const RANGES = ["1M", "3M", "6M", "1Y", "5Y", "Max"] as const;
+const RANGES = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "Max"] as const;
 type Range = (typeof RANGES)[number];
 
 const ALL_REGIMES: RegimeLabel[] = [
@@ -395,6 +395,13 @@ export default function YieldRegimePanel() {
           <strong>Threshold &amp; lookback</strong> default to 5bps change in the spread over 10 trading days
           (both configurable via <code>REGIME_THRESHOLD_BPS</code> / <code>REGIME_LOOKBACK_DAYS</code>) — this
           smooths out single-day noise so the regime label doesn&apos;t flip on every small wiggle.
+        </p>
+        <p>
+          <strong>1D / 5D</strong> ranges show the most recent 1 or 5 trading-day rows of this same daily
+          series, not a separate intraday view — FRED doesn&apos;t publish intraday Treasury yields, so
+          there&apos;s no minute-level granularity to show here the way the Daypart tab has for QQQ/TQQQ
+          volume. They&apos;re trimmed by trading-day count rather than a calendar-day cutoff, so a
+          Friday/Monday boundary reliably returns exactly 1 or 5 rows instead of 0-2.
         </p>
         <p>
           <strong>Data source.</strong> 10Y/2Y yields come from FRED&apos;s public <code>DGS10</code>/

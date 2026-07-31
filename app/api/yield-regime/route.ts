@@ -3,7 +3,7 @@ import { ensureFreshRegimeData, getCurrentRegimeState, getRegimeEpisodes, getReg
 
 export const revalidate = 3600; // regime state changes at most once per trading day; ensureFreshRegimeData is the real freshness gate
 
-const VALID_RANGES = new Set(["1M", "3M", "6M", "1Y", "5Y", "Max"]);
+const VALID_RANGES = new Set(["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "Max"]);
 
 export async function GET(req: NextRequest) {
   const rangeParam = req.nextUrl.searchParams.get("range") ?? "1Y";
