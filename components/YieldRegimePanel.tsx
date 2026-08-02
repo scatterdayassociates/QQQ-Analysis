@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { DailyRegimeRow, OverlayPoint, RegimeCurrentState, RegimeEpisode, RegimeLabel } from "@/lib/yieldRegime";
+import type { DailyRegimeRow, OverlayPoint, RefreshDiagnostics, RegimeCurrentState, RegimeEpisode, RegimeLabel } from "@/lib/yieldRegime";
 import RegimeChart, { regimeSlug } from "./RegimeChart";
 
 const RANGES = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "Max"] as const;
@@ -22,6 +22,7 @@ interface YieldRegimeResponse {
   series: DailyRegimeRow[];
   episodes: RegimeEpisode[];
   range: string;
+  refresh: RefreshDiagnostics;
 }
 
 function fmtPct(v: number | null, digits = 2): string {
@@ -175,6 +176,13 @@ export default function YieldRegimePanel() {
               </div>
             </div>
             <p className="data-as-of">Treasury data as of {data.current.asOfDate ?? "—"} (FRED DGS10/DGS2).</p>
+            {data.refresh.lastRefreshAttemptAt && (
+              <p className={`data-as-of${data.refresh.lastRefreshError ? " data-as-of-warning" : ""}`}>
+                Last refresh check: {new Date(data.refresh.lastRefreshAttemptAt).toLocaleString()} · newest FRED
+                observation seen: {data.refresh.lastFredObservedDate ?? "—"}
+                {data.refresh.lastRefreshError ? ` · failed: ${data.refresh.lastRefreshError}` : ""}
+              </p>
+            )}
           </div>
 
           <div className="card">

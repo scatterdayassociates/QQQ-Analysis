@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/yield-regime/refresh",
-      "schedule": "0 22 * * 1-5"
+      "schedule": "0 * * * *"
     }
   ]
 }

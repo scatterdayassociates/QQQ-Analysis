@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureFreshRegimeData, getCurrentRegimeState, getRegimeEpisodes, getRegimeSeries } from "@/lib/yieldRegime";
+import { ensureFreshRegimeData, getCurrentRegimeState, getLastRefreshDiagnostics, getRegimeEpisodes, getRegimeSeries } from "@/lib/yieldRegime";
 
 export const revalidate = 3600; // regime state changes at most once per trading day; ensureFreshRegimeData is the real freshness gate
 
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   try {
     await ensureFreshRegimeData();
     const [current, series, episodes] = await Promise.all([getCurrentRegimeState(), getRegimeSeries(range), getRegimeEpisodes()]);
-    return NextResponse.json({ current, series, episodes, range });
+    return NextResponse.json({ current, series, episodes, range, refresh: getLastRefreshDiagnostics() });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 502 });

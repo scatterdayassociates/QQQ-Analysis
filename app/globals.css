@@ -1120,6 +1120,10 @@ tbody tr.active td {
   margin-top: 0.2rem;
 }
 
+.data-as-of-warning {
+  color: var(--down);
+}
+
 @media (max-width: 760px) {
   .fa-top-grid {
     grid-template-columns: 1fr;

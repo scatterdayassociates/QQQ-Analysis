@@ -299,6 +299,16 @@ async function replaceEpisodes(episodes: RegimeEpisode[]): Promise<void> {
 
 let refreshInFlight: Promise<{ daysWritten: number; episodesWritten: number }> | null = null;
 
+// Best-effort, in-memory diagnostics for the most recent refresh attempt in
+// *this* server instance — reset on every cold start, so this only ever
+// reflects "what just happened," not history. Exposed via the API response
+// (see getLastRefreshDiagnostics) so a stuck/failing refresh is visible
+// directly in the browser instead of requiring Vercel log access, same
+// pattern already used for AI Earnings Analysis' fetch diagnostics.
+let lastRefreshAttemptAt: string | null = null;
+let lastRefreshError: string | null = null;
+let lastFredObservedDate: string | null = null;
+
 /**
  * The "daily job" from the spec, reframed as an idempotent function rather
  * than a standalone script: fetch full FRED history, recompute the regime
@@ -307,26 +317,40 @@ let refreshInFlight: Promise<{ daysWritten: number; episodesWritten: number }> |
  * deliberately simple — the full DGS10/DGS2-since-2000 history is only a
  * few thousand rows, trivial to reprocess in-memory every time, and this
  * sidesteps an entire class of incremental-update bugs (e.g. a late-arriving
- * FRED revision to a prior day silently going unfixed).
+ * FRED revision to a prior day silently going unfixed). Called directly by
+ * the cron/manual refresh route on every trigger (no freshness gate — the
+ * FRED fetch itself is cheap and cached for an hour, so hourly polling via
+ * vercel.json's cron costs little even when there's nothing new to write),
+ * and indirectly by ensureFreshRegimeData below for the self-healing case.
  */
 export async function refreshRegimeData(): Promise<{ daysWritten: number; episodesWritten: number }> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    await ensureRegimeTables();
+    lastRefreshAttemptAt = new Date().toISOString();
+    try {
+      await ensureRegimeTables();
 
-    const [y10Obs, y2Obs] = await Promise.all([fetchFredSeriesWithDates("DGS10"), fetchFredSeriesWithDates("DGS2")]);
-    const aligned = alignObservations(y10Obs, y2Obs).filter((o) => o.date >= REGIME_BACKFILL_START);
-    const dailyRows = computeDailyRegimes(aligned, REGIME_LOOKBACK_DAYS, REGIME_THRESHOLD_BPS);
+      const [y10Obs, y2Obs] = await Promise.all([fetchFredSeriesWithDates("DGS10"), fetchFredSeriesWithDates("DGS2")]);
+      const aligned = alignObservations(y10Obs, y2Obs).filter((o) => o.date >= REGIME_BACKFILL_START);
+      lastFredObservedDate = aligned.length > 0 ? aligned[aligned.length - 1].date : null;
+      const dailyRows = computeDailyRegimes(aligned, REGIME_LOOKBACK_DAYS, REGIME_THRESHOLD_BPS);
 
-    await upsertDailyRows(dailyRows);
+      await upsertDailyRows(dailyRows);
 
-    const episodesRaw = buildEpisodes(dailyRows);
-    const episodes = await fillQqqPctChange(episodesRaw);
-    await replaceEpisodes(episodes);
+      const episodesRaw = buildEpisodes(dailyRows);
+      const episodes = await fillQqqPctChange(episodesRaw);
+      await replaceEpisodes(episodes);
 
-    console.error(`[yield-regime] refreshed: ${dailyRows.length} daily rows, ${episodes.length} episodes.`);
-    return { daysWritten: dailyRows.length, episodesWritten: episodes.length };
+      lastRefreshError = null;
+      console.error(
+        `[yield-regime] refreshed: ${dailyRows.length} daily rows, ${episodes.length} episodes. Newest FRED observation: ${lastFredObservedDate ?? "none"}.`
+      );
+      return { daysWritten: dailyRows.length, episodesWritten: episodes.length };
+    } catch (err) {
+      lastRefreshError = err instanceof Error ? err.message : String(err);
+      throw err;
+    }
   })();
 
   try {
@@ -341,8 +365,7 @@ export async function refreshRegimeData(): Promise<{ daysWritten: number; episod
  * correctness never depends on the Vercel Cron job in vercel.json actually
  * firing — it's a pre-warming nicety, not a requirement. Cheap on the
  * common case: the FRED CSV fetch itself is cached for an hour (see
- * fetchFredSeriesWithDates), and this skips the DB write entirely if the
- * newest computed row is already the newest stored row.
+ * fetchFredSeriesWithDates).
  */
 export async function ensureFreshRegimeData(): Promise<void> {
   await ensureRegimeTables();
@@ -360,13 +383,24 @@ export async function ensureFreshRegimeData(): Promise<void> {
 
   try {
     await refreshRegimeData();
-  } catch (err) {
+  } catch {
     // Leave existing DB data in place — the read path still returns
     // whatever was last stored, same graceful-degradation convention used
     // everywhere else in this app, rather than failing the whole tab
-    // because today's FRED fetch happened to fail.
-    console.error(`[yield-regime] refresh failed, serving existing data: ${err instanceof Error ? err.message : String(err)}`);
+    // because today's FRED fetch happened to fail. The error itself is
+    // captured in lastRefreshError (set inside refreshRegimeData) and
+    // surfaced via getLastRefreshDiagnostics rather than re-logged here.
   }
+}
+
+export interface RefreshDiagnostics {
+  lastRefreshAttemptAt: string | null;
+  lastRefreshError: string | null;
+  lastFredObservedDate: string | null; // newest date FRED itself returned on the last attempt, regardless of whether it was new
+}
+
+export function getLastRefreshDiagnostics(): RefreshDiagnostics {
+  return { lastRefreshAttemptAt, lastRefreshError, lastFredObservedDate };
 }
 
 export interface RegimeCurrentState {

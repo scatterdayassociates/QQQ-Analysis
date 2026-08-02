@@ -218,8 +218,14 @@ each contiguous regime as a historical "episode," overlaid against QQQ/TQQQ pric
   "T10Y2Y Regime database setup" below for the connection string and schema. Data is kept fresh
   automatically — every read checks whether the newest stored trading day is current and
   re-fetches/recomputes if not — so correctness never depends on the optional Vercel Cron job
-  (`vercel.json`, hits `/api/yield-regime/refresh` on a schedule) actually firing; that cron is a
-  pre-warming nicety, not a requirement. Backfill starts 2000-01-01 by default (covers QQQ's full
+  (`vercel.json`, hits `/api/yield-regime/refresh` **hourly**) actually firing; that cron just
+  means new FRED data gets picked up within the hour without needing a page visit to trigger it,
+  rather than being a requirement for correctness. Note that hourly polling only closes the gap
+  between "FRED has published it" and "this app noticed" — it can't make FRED itself publish
+  faster; DGS10/DGS2 both carry FRED's own ~1-business-day publication lag, so a same-day value
+  showing up isn't guaranteed even with hourly checks. The tab's Current State card shows a "Last
+  refresh check" line (newest FRED date seen, and any error) so a genuine staleness bug is visible
+  without digging through Vercel logs. Backfill starts 2000-01-01 by default (covers QQQ's full
   trading history), overridable via `REGIME_BACKFILL_START` — FRED itself has `DGS10` data back to
   1962.
 - **QQQ/TQQQ overlay**: QQQ's % change is precomputed per episode (via Massive's Custom Bars, same
@@ -388,16 +394,23 @@ The first request to `/api/yield-regime` after setting `DATABASE_URL` triggers a
 (FRED history from `REGIME_BACKFILL_START`, default 2000-01-01, through today) — this can take a
 few seconds the very first time since it also fetches QQQ's full daily history from Massive to
 compute each episode's % change, but every subsequent load is fast (it only recomputes when the
-newest stored trading day isn't current). Optionally, also set:
+newest stored trading day isn't current). `vercel.json` also schedules an hourly cron hitting
+`/api/yield-regime/refresh` so newly-published FRED data gets picked up without waiting for a page
+visit — note Vercel's Hobby plan restricts Cron Jobs to once per day regardless of what
+`vercel.json` requests, so hourly firing requires at least the Pro plan. Optionally, also set:
 
 ```
 CRON_SECRET=some_random_string
 ```
 
 ...and add the matching value to your Vercel project's Environment Variables — this lets
-`vercel.json`'s daily cron job (`/api/yield-regime/refresh`) authenticate, so the first visitor
-each day doesn't wait on that day's backfill. It's optional: the read path (`ensureFreshRegimeData`
-in `lib/yieldRegime.ts`) self-heals stale data regardless of whether the cron ever fires.
+`vercel.json`'s hourly cron job (`/api/yield-regime/refresh`) authenticate, so newly-published
+FRED data gets picked up within the hour without needing a page visit to trigger it. It's
+optional: without a `CRON_SECRET`, the refresh route is left open rather than rejecting the cron
+(same graceful-degradation pattern as everywhere else), and the read path
+(`ensureFreshRegimeData` in `lib/yieldRegime.ts`) still self-heals stale data on every request
+regardless of whether the cron ever fires — but setting one is recommended so the endpoint can't
+be spammed by anyone who finds the URL, especially now that it's meant to fire every hour.
 
 Every other tab works with no `DATABASE_URL` at all — omitting it just means the T10Y2Y Regime
 tab shows a red error box (see "Troubleshooting" below) while every other tab is unaffected.
@@ -557,6 +570,24 @@ excludes it.
   `regime` yet, since there isn't enough trailing history for a lookback comparison) — wait for
   more days to accumulate, or move `REGIME_BACKFILL_START` earlier so there's already 10+ trading
   days of history before the range you care about.
+- **T10Y2Y Regime data looks stale (showing a date more than ~1 business day old)** — check the
+  "Last refresh check" line under the Current State card first; it shows when this server instance
+  last attempted a refresh, what the newest FRED observation it saw was, and any error. Two
+  different things can cause this, and that line tells you which:
+  - If **newest FRED observation seen** is itself old (e.g. only 2 days newer than what's
+    displayed), FRED simply hasn't published anything more recent yet — DGS10/DGS2 both carry
+    FRED's own ~1-business-day publication lag, and neither the hourly cron nor the read-path
+    self-heal can produce data FRED hasn't published. This isn't a bug; it'll catch up
+    automatically once FRED posts the next value (checked hourly via `vercel.json`'s cron, or on
+    the next page load either way).
+  - If there's a **failed:** message on that line, that's the actual error from the last refresh
+    attempt (FRED unreachable, a MySQL write failure, etc.) — same detail also lands in Vercel's
+    function logs for `/api/yield-regime` and `/api/yield-regime/refresh` under a `[yield-regime]`
+    line if you'd rather check there.
+  - If **Last refresh check** never appears at all, no refresh has been attempted by this server
+    instance yet (e.g. right after a cold start before the cron's next tick) — reload the page,
+    which triggers `ensureFreshRegimeData` itself, or manually hit `/api/yield-regime/refresh`
+    (add `?secret=YOUR_CRON_SECRET` if you've set one) to force an immediate attempt.
 
 Note: this app calls Massive's **Stocks** Custom Bars endpoint (Stocks Starter tier) for all
 price/volume data, plus Alpha Vantage's free `EARNINGS_CALENDAR` and `EARNINGS` endpoints for
