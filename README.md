@@ -12,9 +12,10 @@ A lightweight Next.js dashboard with five tabs:
 4. **AI Earnings Analysis** — an AI-capex buyer fragility screen across a small tiered universe
    (Alphabet, Microsoft, Meta, Amazon, Oracle, CoreWeave), scoring whether each is still funding
    infrastructure spend from operating cash flow or increasingly from debt/equity issuance.
-5. **T10Y2Y Regime** — classifies the 10Y-2Y Treasury yield-curve regime (growth vs. term-premium
-   steepening, bull vs. bear flattening) day by day, tracks each regime as a historical episode,
-   and overlays QQQ/TQQQ price action against the regime timeline.
+5. **T10Y2Y Regime** — classifies the 10Y-2Y Treasury yield curve on two independent axes: Regime
+   (growth vs. term-premium steepening, bull vs. bear flattening — driven by recent change) and
+   Level (inverted/flat/normal/steep — driven by today's absolute spread), tracks each Regime as a
+   historical episode, and overlays QQQ/TQQQ price action against the timeline.
 
 Powered by the [Massive](https://massive.com) (formerly Polygon.io) market data API, plus
 free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inputs (see below).
@@ -194,24 +195,33 @@ bundle small.
 
 ## Tab 5: T10Y2Y Regime Classification
 
-Classifies each trading day's 10Y-2Y Treasury spread move into one of seven regimes and tracks
-each contiguous regime as a historical "episode," overlaid against QQQ/TQQQ price action.
+Classifies the 10Y-2Y Treasury spread on **two independent axes**, tracks contiguous Regime
+episodes as historical "episodes," and overlays both against QQQ/TQQQ price action.
 
-- **Regimes**: spread widening (steepening) splits into **Growth Steepening** (2Y falling faster
-  than 10Y — rate-cut expectations, typically NDX-supportive) vs. **Term Premium Steepening** (10Y
-  rising faster — inflation/fiscal concerns, typically an NDX headwind); spread narrowing
-  (flattening) splits into **Bull Flattening** (10Y falling faster — growth/recession fear,
-  ambiguous for NDX) vs. **Bear Flattening** (2Y rising faster — Fed hiking, classic late-cycle
-  tightening); moves that don't clearly fit either sub-case land in **Steepening (Mixed)** /
-  **Flattening (Mixed)**; moves smaller than the threshold land in **Range-bound / No Signal**.
-  Threshold and lookback default to 5bps change in the spread over 10 trading days
-  (`REGIME_THRESHOLD_BPS` / `REGIME_LOOKBACK_DAYS`). **Classification is driven entirely by the
-  change in the spread over the lookback window, not the spread's absolute level** — an elevated
-  spread with a small recent change correctly reads "Range-bound / No Signal." The tab includes a
-  "Regime Definitions" reference table (strict bps thresholds + which leg — 2Y or 10Y — has to
-  dominate, per regime) built dynamically from the live `REGIME_THRESHOLD_BPS`/
-  `REGIME_LOOKBACK_DAYS` values, and the Current State card shows the actual Δ Spread/Δ10Y/Δ2Y
-  driving today's classification alongside the levels.
+- **Regime (Momentum axis)**: seven states driven purely by the *change* in the spread over a
+  trailing lookback window — spread widening (steepening) splits into **Growth Steepening** (2Y
+  falling faster than 10Y — rate-cut expectations, typically NDX-supportive) vs. **Term Premium
+  Steepening** (10Y rising faster — inflation/fiscal concerns, typically an NDX headwind); spread
+  narrowing (flattening) splits into **Bull Flattening** (10Y falling faster — growth/recession
+  fear, ambiguous for NDX) vs. **Bear Flattening** (2Y rising faster — Fed hiking, classic
+  late-cycle tightening); moves that don't clearly fit either sub-case land in **Steepening
+  (Mixed)** / **Flattening (Mixed)**; moves smaller than the threshold land in **Range-bound / No
+  Signal**. Threshold and lookback default to 5bps change in the spread over 10 trading days
+  (`REGIME_THRESHOLD_BPS` / `REGIME_LOOKBACK_DAYS`).
+- **Level (absolute axis)**: a second, independent classification of *today's spread value in
+  isolation* — **Deeply Inverted** (< -50bps), **Inverted** (-50 to 0bps), **Flat** (0-50bps),
+  **Normal** (50-150bps), or **Steep** (150bps+), each boundary configurable
+  (`REGIME_LEVEL_DEEP_INVERSION_BPS` / `REGIME_LEVEL_NORMAL_BPS` / `REGIME_LEVEL_STEEP_BPS`). Level
+  never looks at recent change, so it doesn't get folded into or override the Regime label — an
+  elevated Level alongside a Range-bound Regime is two true, independent facts about the curve
+  ("where is it?" vs. "is it currently moving?"), not a contradiction. Shown as its own chip next
+  to Regime everywhere in the tab (Current State, chart hover readout, daily detail table) rather
+  than blended into a single score, so neither axis dilutes the other.
+- Both axes get their own **Regime Definitions** reference tables (strict bps thresholds + which
+  leg — 2Y or 10Y — has to dominate for Regime; strict bps cutoffs for Level), built dynamically
+  from the live config values so they can't drift from what the server actually applies. The
+  Current State card also shows the actual Δ Spread/Δ10Y/Δ2Y driving today's Regime classification
+  alongside the levels, so neither label needs to be taken on faith.
 - **Data source**: FRED's public `DGS10`/`DGS2` series (no API key, no rate limit) — the same
   free, key-free convention this app already uses for VIX/USD-index proxies on the Fundamental
   Analysis tab, extended here to also capture each observation's date. A day only counts toward

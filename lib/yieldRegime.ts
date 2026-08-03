@@ -45,6 +45,39 @@ export const REGIME_THRESHOLD_BPS = envInt("REGIME_THRESHOLD_BPS", 5);
 export const REGIME_LOOKBACK_DAYS = envInt("REGIME_LOOKBACK_DAYS", 10);
 export const REGIME_BACKFILL_START = process.env.REGIME_BACKFILL_START?.trim() || "2000-01-01"; // QQQ inception (Mar 1999) + margin, so every episode has QQQ overlay coverage
 
+// Absolute spread-level bands — a second, independent axis from the
+// momentum classifier below (Option A from the methodology discussion):
+// shown alongside the momentum regime rather than folded into it, since
+// "steepening off an inverted base" and "steepening off an already-steep
+// base" are genuinely different situations that a single label would
+// conflate. Boundaries are configurable fixed bps cutoffs (not
+// percentile/z-score bands) for the same reason REGIME_THRESHOLD_BPS is a
+// fixed cutoff — simple, explicit, and doesn't shift retroactively as more
+// history accumulates. Defaults are round numbers spanning T10Y2Y's
+// realistic historical range (roughly -1.0% during the 2022-23 inversion to
+// +2.5%+ in 2021).
+export const REGIME_LEVEL_DEEP_INVERSION_BPS = envInt("REGIME_LEVEL_DEEP_INVERSION_BPS", -50);
+export const REGIME_LEVEL_NORMAL_BPS = envInt("REGIME_LEVEL_NORMAL_BPS", 50);
+export const REGIME_LEVEL_STEEP_BPS = envInt("REGIME_LEVEL_STEEP_BPS", 150);
+
+export type SpreadLevelBand = "Deeply Inverted" | "Inverted" | "Flat" | "Normal" | "Steep";
+
+/**
+ * Classifies today's spread *level* (not its change) into one of five
+ * bands. Pure function of the spread value + the three configured
+ * boundaries below, so it's computed on demand at read time rather than
+ * stored — a config change (e.g. moving REGIME_LEVEL_NORMAL_BPS) applies
+ * retroactively across all history for free, with no reprocessing needed.
+ */
+export function classifySpreadLevel(spreadPct: number): SpreadLevelBand {
+  const bps = spreadPct * 100;
+  if (bps < REGIME_LEVEL_DEEP_INVERSION_BPS) return "Deeply Inverted";
+  if (bps < 0) return "Inverted";
+  if (bps < REGIME_LEVEL_NORMAL_BPS) return "Flat";
+  if (bps < REGIME_LEVEL_STEEP_BPS) return "Normal";
+  return "Steep";
+}
+
 // The pseudocode's own output labels (Section 2) — "Growth Steepening" and
 // "Term Premium Steepening" are the two sub-cases of the summary table's
 // "Bull Steepening" / "Bear Steepening", surfaced explicitly per the spec
@@ -145,20 +178,25 @@ export interface DailyRegimeRow {
   d2y: number | null;
   dspread: number | null;
   regime: RegimeLabel | null; // null only for the first REGIME_LOOKBACK_DAYS rows of the whole series (not enough history for a lookback comparison yet)
+  // Computed on the fly (see classifySpreadLevel), not stored in
+  // yield_regime_daily — this is the level axis (Option A), independent of
+  // and shown alongside the momentum-based `regime` field above.
+  levelBand: SpreadLevelBand;
 }
 
 function computeDailyRegimes(obs: AlignedObservation[], lookbackDays: number, thresholdBps: number): DailyRegimeRow[] {
   const thresholdPct = thresholdBps / 100;
   return obs.map((o, i) => {
     const spread = o.y10 - o.y2;
+    const levelBand = classifySpreadLevel(spread);
     if (i < lookbackDays) {
-      return { date: o.date, y10: o.y10, y2: o.y2, spread, d10y: null, d2y: null, dspread: null, regime: null };
+      return { date: o.date, y10: o.y10, y2: o.y2, spread, d10y: null, d2y: null, dspread: null, regime: null, levelBand };
     }
     const prior = obs[i - lookbackDays];
     const d10y = o.y10 - prior.y10;
     const d2y = o.y2 - prior.y2;
     const dspread = d10y - d2y; // == spread - prior.spread, per the spec's own equivalence note
-    return { date: o.date, y10: o.y10, y2: o.y2, spread, d10y, d2y, dspread, regime: classifyRegime(d2y, d10y, dspread, thresholdPct) };
+    return { date: o.date, y10: o.y10, y2: o.y2, spread, d10y, d2y, dspread, regime: classifyRegime(d2y, d10y, dspread, thresholdPct), levelBand };
   });
 }
 
@@ -416,6 +454,7 @@ export interface RegimeCurrentState {
   d2y: number | null;
   dspread: number | null;
   regime: RegimeLabel | null;
+  levelBand: SpreadLevelBand | null; // the level axis (Option A) — independent of `regime`, computed on the fly
   regimeStartDate: string | null;
   daysInRegime: number | null;
 }
@@ -433,6 +472,7 @@ export async function getCurrentRegimeState(): Promise<RegimeCurrentState> {
       d2y: null,
       dspread: null,
       regime: null,
+      levelBand: null,
       regimeStartDate: null,
       daysInRegime: null,
     };
@@ -443,15 +483,17 @@ export async function getCurrentRegimeState(): Promise<RegimeCurrentState> {
   );
   const currentEpisode = episodeRows[0];
 
+  const spread = Number(latest.spread);
   return {
     asOfDate: latest.date as string,
-    spread: Number(latest.spread),
+    spread,
     y10: Number(latest.y10),
     y2: Number(latest.y2),
     d10y: latest.d10y === null ? null : Number(latest.d10y),
     d2y: latest.d2y === null ? null : Number(latest.d2y),
     dspread: latest.dspread === null ? null : Number(latest.dspread),
     regime: (latest.regime as RegimeLabel | null) ?? null,
+    levelBand: classifySpreadLevel(spread),
     regimeStartDate: (currentEpisode?.start_date as string | undefined) ?? null,
     daysInRegime: (currentEpisode?.duration_trading_days as number | undefined) ?? null,
   };
@@ -498,16 +540,20 @@ export async function getRegimeSeries(range: string): Promise<DailyRegimeRow[]> 
           calendarDays === null ? undefined : [calendarDays]
         );
 
-  return rows.map((r) => ({
-    date: r.date as string,
-    y10: Number(r.y10),
-    y2: Number(r.y2),
-    spread: Number(r.spread),
-    d10y: r.d10y === null ? null : Number(r.d10y),
-    d2y: r.d2y === null ? null : Number(r.d2y),
-    dspread: r.dspread === null ? null : Number(r.dspread),
-    regime: (r.regime as RegimeLabel | null) ?? null,
-  }));
+  return rows.map((r) => {
+    const spread = Number(r.spread);
+    return {
+      date: r.date as string,
+      y10: Number(r.y10),
+      y2: Number(r.y2),
+      spread,
+      d10y: r.d10y === null ? null : Number(r.d10y),
+      d2y: r.d2y === null ? null : Number(r.d2y),
+      dspread: r.dspread === null ? null : Number(r.dspread),
+      regime: (r.regime as RegimeLabel | null) ?? null,
+      levelBand: classifySpreadLevel(spread),
+    };
+  });
 }
 
 export async function getRegimeEpisodes(): Promise<RegimeEpisode[]> {

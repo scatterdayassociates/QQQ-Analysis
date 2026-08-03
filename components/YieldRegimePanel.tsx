@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { DailyRegimeRow, OverlayPoint, RefreshDiagnostics, RegimeCurrentState, RegimeEpisode, RegimeLabel } from "@/lib/yieldRegime";
+import type {
+  DailyRegimeRow,
+  OverlayPoint,
+  RefreshDiagnostics,
+  RegimeCurrentState,
+  RegimeEpisode,
+  RegimeLabel,
+  SpreadLevelBand,
+} from "@/lib/yieldRegime";
 import RegimeChart, { regimeSlug } from "./RegimeChart";
 
 const RANGES = ["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "Max"] as const;
@@ -17,9 +25,18 @@ const ALL_REGIMES: RegimeLabel[] = [
   "Range-bound / No Signal",
 ];
 
+const ALL_LEVEL_BANDS: SpreadLevelBand[] = ["Deeply Inverted", "Inverted", "Flat", "Normal", "Steep"];
+
+function levelSlug(band: SpreadLevelBand): string {
+  return band.toLowerCase().replace(/\s+/g, "-");
+}
+
 interface RegimeConfig {
   thresholdBps: number;
   lookbackDays: number;
+  levelDeepInversionBps: number;
+  levelNormalBps: number;
+  levelSteepBps: number;
 }
 
 interface YieldRegimeResponse {
@@ -56,6 +73,11 @@ function pctClass(v: number | null): string {
 function RegimeChip({ regime }: { regime: RegimeLabel | null }) {
   if (!regime) return <span>—</span>;
   return <span className={`regime-chip regime-${regimeSlug(regime)}`}>{regime}</span>;
+}
+
+function LevelChip({ band }: { band: SpreadLevelBand | null }) {
+  if (!band) return <span>—</span>;
+  return <span className={`level-chip level-${levelSlug(band)}`}>{band}</span>;
 }
 
 interface RegimeDefinition {
@@ -116,6 +138,25 @@ function buildRegimeDefinitions(config: RegimeConfig): RegimeDefinition[] {
       legCondition: "Not evaluated — level-independent",
       interpretation: "Spread change is within the noise threshold over the lookback window, regardless of the spread's absolute level.",
     },
+  ];
+}
+
+interface LevelDefinition {
+  band: SpreadLevelBand;
+  condition: string;
+}
+
+// Option A's second, independent axis: today's spread LEVEL (not its
+// change) — see classifySpreadLevel in lib/yieldRegime.ts. Bounds come
+// from the live config so they can't drift from what the server applies.
+function buildLevelDefinitions(config: RegimeConfig): LevelDefinition[] {
+  const { levelDeepInversionBps: d, levelNormalBps: n, levelSteepBps: s } = config;
+  return [
+    { band: "Deeply Inverted", condition: `Spread < ${d}bps` },
+    { band: "Inverted", condition: `${d}bps ≤ Spread < 0bps` },
+    { band: "Flat", condition: `0bps ≤ Spread < ${n}bps` },
+    { band: "Normal", condition: `${n}bps ≤ Spread < ${s}bps` },
+    { band: "Steep", condition: `Spread ≥ ${s}bps` },
   ];
 }
 
@@ -210,8 +251,9 @@ export default function YieldRegimePanel() {
         <div>
           <h1>T10Y2Y Regime Classification</h1>
           <p className="subtitle">
-            Classifies the current 10Y-2Y Treasury yield-curve regime — growth-driven vs. term-premium-driven
-            steepening, bull vs. bear flattening — and overlays it against QQQ/TQQQ price action so regime
+            Classifies the 10Y-2Y Treasury yield curve on two independent axes — Regime (Momentum: growth-driven
+            vs. term-premium-driven steepening, bull vs. bear flattening) and Level (where the spread sits
+            historically: inverted, flat, normal, or steep) — and overlays both against QQQ/TQQQ price action so
             shifts can be visually cross-referenced against equity direction.
           </p>
         </div>
@@ -228,9 +270,15 @@ export default function YieldRegimePanel() {
             <div className="chart-label">Current State</div>
             <div className="readout">
               <div className="stat">
-                <span className="k">Regime</span>
+                <span className="k">Regime (Momentum)</span>
                 <span className="v">
                   <RegimeChip regime={data.current.regime} />
+                </span>
+              </div>
+              <div className="stat">
+                <span className="k">Level</span>
+                <span className="v">
+                  <LevelChip band={data.current.levelBand} />
                 </span>
               </div>
               <div className="stat">
@@ -263,10 +311,13 @@ export default function YieldRegimePanel() {
               </div>
             </div>
             <p className="data-as-of">
-              Treasury data as of {data.current.asOfDate ?? "—"} (FRED DGS10/DGS2). Classification is driven by the
-              Δ Spread column above (change over the last {data.config.lookbackDays} trading days vs. the
-              ±{data.config.thresholdBps}bps threshold) — <strong>not</strong> the Spread level itself. An elevated
-              level with a small Δ correctly reads &ldquo;Range-bound&rdquo;; see Regime Definitions below.
+              Treasury data as of {data.current.asOfDate ?? "—"} (FRED DGS10/DGS2). <strong>Regime (Momentum)</strong>{" "}
+              and <strong>Level</strong> are two independent axes, not one blended signal: Regime is driven purely
+              by the Δ Spread columns above (change over the last {data.config.lookbackDays} trading days vs. the
+              ±{data.config.thresholdBps}bps threshold), while Level classifies today&apos;s spread value in
+              isolation. An elevated Level with a small Δ correctly shows a Range-bound Regime alongside a
+              Normal/Steep Level — that&apos;s two true facts about the curve, not a contradiction. See Regime
+              Definitions below for both axes&apos; exact cutoffs.
             </p>
             {data.refresh.lastRefreshAttemptAt && (
               <p className={`data-as-of${data.refresh.lastRefreshError ? " data-as-of-warning" : ""}`}>
@@ -278,7 +329,7 @@ export default function YieldRegimePanel() {
           </div>
 
           <div className="card">
-            <div className="chart-label">Regime Definitions</div>
+            <div className="chart-label">Regime Definitions — Momentum Axis</div>
             <div className="table-wrap">
               <table className="mono">
                 <thead>
@@ -308,6 +359,39 @@ export default function YieldRegimePanel() {
               trading days ago); Δ Spread always equals Δ10Y − Δ2Y exactly. Thresholds are configurable via{" "}
               <code>REGIME_THRESHOLD_BPS</code> (currently {data.config.thresholdBps}bps) and{" "}
               <code>REGIME_LOOKBACK_DAYS</code> (currently {data.config.lookbackDays} trading days).
+            </p>
+
+            <div className="chart-label" style={{ marginTop: "1.4rem" }}>
+              Level Definitions — Absolute Axis
+            </div>
+            <div className="table-wrap">
+              <table className="mono">
+                <thead>
+                  <tr>
+                    <th>Level</th>
+                    <th>Spread Condition</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {buildLevelDefinitions(data.config).map((def) => (
+                    <tr key={def.band}>
+                      <td>
+                        <LevelChip band={def.band} />
+                      </td>
+                      <td>{def.condition}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="footnote">
+              Level classifies <strong>today&apos;s spread value in isolation</strong> — it never looks at recent
+              change, so it&apos;s entirely independent of the Momentum axis above (a name can be Range-bound
+              (Momentum) and Steep (Level) at the same time — those are two separate true facts, not a
+              contradiction). Cutoffs are configurable via <code>REGIME_LEVEL_DEEP_INVERSION_BPS</code> (currently{" "}
+              {data.config.levelDeepInversionBps}bps), <code>REGIME_LEVEL_NORMAL_BPS</code> (currently{" "}
+              {data.config.levelNormalBps}bps), and <code>REGIME_LEVEL_STEEP_BPS</code> (currently{" "}
+              {data.config.levelSteepBps}bps).
             </p>
           </div>
 
@@ -401,6 +485,12 @@ export default function YieldRegimePanel() {
                   <RegimeChip regime={displayedRow?.regime ?? null} />
                 </span>
               </div>
+              <div className="stat">
+                <span className="k">Level</span>
+                <span className="v">
+                  <LevelChip band={displayedRow?.levelBand ?? null} />
+                </span>
+              </div>
               {showQqq && (
                 <div className="stat">
                   <span className="k">QQQ Close</span>
@@ -488,6 +578,7 @@ export default function YieldRegimePanel() {
                       <th>2Y</th>
                       <th>Spread</th>
                       <th>Regime</th>
+                      <th>Level</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -499,6 +590,9 @@ export default function YieldRegimePanel() {
                         <td>{fmtPct(r.spread)}</td>
                         <td>
                           <RegimeChip regime={r.regime} />
+                        </td>
+                        <td>
+                          <LevelChip band={r.levelBand} />
                         </td>
                       </tr>
                     ))}
@@ -529,6 +623,15 @@ export default function YieldRegimePanel() {
           <strong>Threshold &amp; lookback</strong> default to 5bps change in the spread over 10 trading days
           (both configurable via <code>REGIME_THRESHOLD_BPS</code> / <code>REGIME_LOOKBACK_DAYS</code>) — this
           smooths out single-day noise so the regime label doesn&apos;t flip on every small wiggle.
+        </p>
+        <p>
+          <strong>Level</strong> is a second, independent axis alongside Regime — where today&apos;s spread sits
+          in absolute terms (Deeply Inverted / Inverted / Flat / Normal / Steep), regardless of how it got
+          there. It never looks at the recent change, so an elevated Level with a Range-bound Regime isn&apos;t
+          a contradiction — they answer two different questions (&ldquo;where is the curve?&rdquo; vs.
+          &ldquo;is it currently moving?&rdquo;). Deliberately shown as a separate tag rather than folded into
+          a single blended label or score, so neither axis dilutes or gets overridden by the other. See Regime
+          Definitions above for both axes&apos; exact, configurable cutoffs.
         </p>
         <p>
           <strong>1D / 5D</strong> ranges show the most recent 1 or 5 trading-day rows of this same daily

@@ -5,6 +5,9 @@ import {
   getLastRefreshDiagnostics,
   getRegimeEpisodes,
   getRegimeSeries,
+  REGIME_LEVEL_DEEP_INVERSION_BPS,
+  REGIME_LEVEL_NORMAL_BPS,
+  REGIME_LEVEL_STEEP_BPS,
   REGIME_LOOKBACK_DAYS,
   REGIME_THRESHOLD_BPS,
 } from "@/lib/yieldRegime";
@@ -34,7 +37,13 @@ export async function GET(req: NextRequest) {
       episodes,
       range,
       refresh: getLastRefreshDiagnostics(),
-      config: { thresholdBps: REGIME_THRESHOLD_BPS, lookbackDays: REGIME_LOOKBACK_DAYS },
+      config: {
+        thresholdBps: REGIME_THRESHOLD_BPS,
+        lookbackDays: REGIME_LOOKBACK_DAYS,
+        levelDeepInversionBps: REGIME_LEVEL_DEEP_INVERSION_BPS,
+        levelNormalBps: REGIME_LEVEL_NORMAL_BPS,
+        levelSteepBps: REGIME_LEVEL_STEEP_BPS,
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

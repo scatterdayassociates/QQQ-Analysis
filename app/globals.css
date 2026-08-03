@@ -1059,6 +1059,49 @@ tbody tr.active td {
   color: var(--muted-2);
 }
 
+/* ---------- T10Y2Y spread level bands (Option A: independent of regime-chip above) ---------- */
+
+.level-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.level-chip.level-deeply-inverted {
+  background: color-mix(in srgb, var(--down) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--down) 45%, var(--border));
+  color: var(--down);
+}
+
+.level-chip.level-inverted {
+  background: color-mix(in srgb, var(--accent-vol) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-vol) 45%, var(--border));
+  color: var(--accent-vol);
+}
+
+.level-chip.level-flat {
+  background: color-mix(in srgb, var(--muted-2) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--muted-2) 45%, var(--border));
+  color: var(--muted-2);
+}
+
+.level-chip.level-normal {
+  background: color-mix(in srgb, var(--accent-qqq) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-qqq) 45%, var(--border));
+  color: var(--accent-qqq);
+}
+
+.level-chip.level-steep {
+  background: color-mix(in srgb, var(--accent-tqqq) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-tqqq) 45%, var(--border));
+  color: var(--accent-tqqq);
+}
+
 .range-selector {
   display: flex;
   gap: 0.3rem;
