@@ -238,6 +238,16 @@ episodes as historical "episodes," and overlays both against QQQ/TQQQ price acti
   extended FRED outage can't burn through Alpha Vantage's free-tier quota and starve the other
   Alpha-Vantage-dependent tabs (Catalyst Tracker, AI Earnings Analysis). The Current State card's
   "Last refresh check" line shows exactly when this fallback was used, if ever.
+- **T10Y2Y cross-check.** Every refresh also fetches FRED's own pre-computed `T10Y2Y` series
+  (non-fatal if it fails) purely to compare its latest date against `DGS10`/`DGS2`'s. FRED has
+  been directly observed publishing `T10Y2Y` a day *ahead* of the individual `DGS10`/`DGS2` series
+  it's computed from — confirmed by downloading FRED's own `DGS10`/`DGS2` CSV exports directly,
+  which showed the same "one day behind T10Y2Y" gap this app did, ruling out any caching/fetch bug
+  here. This is a FRED-side publish-ordering quirk between its component and derived series, not
+  something fixable from the consuming side; the app can only fetch `DGS10`/`DGS2` (needed for
+  leg-attribution — which of the two yields is driving a spread move) and wait for FRED to publish
+  them. When the two disagree, the "Last refresh check" line says so explicitly instead of looking
+  like stale data.
 - **Persistence — the one tab in this app with a database.** Every other tab computes its data
   fresh on each request; this one is backed by MySQL because its episode table is derived by
   walking the *entire* yield history, which is too expensive to redo on every page load. See

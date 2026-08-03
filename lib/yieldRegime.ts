@@ -426,6 +426,18 @@ let lastRefreshError: string | null = null;
 let lastFredObservedDate: string | null = null;
 let usedAlphaVantageFallback = false;
 let alphaVantageFallbackDates: string[] = [];
+// Cross-check only — never written to yield_regime_daily (whose y10/y2
+// columns are NOT NULL, so a spread-only observation can't be stored as a
+// real row anyway). FRED computes T10Y2Y = DGS10 - DGS2 itself, but its own
+// combined series has repeatedly been observed to publish a day *ahead* of
+// the individual DGS10/DGS2 series it's derived from (confirmed directly
+// against user-downloaded fredgraph.csv exports for DGS10/DGS2, which
+// stopped a day short of what FRED's own T10Y2Y series page showed) — a
+// FRED-side publish-ordering quirk between its component and derived
+// series, not a caching or fetch bug in this app. Surfaced here so that gap
+// is visible in the UI instead of looking like stale data.
+let lastT10Y2YObservedDate: string | null = null;
+let lastT10Y2YObservedValue: number | null = null;
 
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // the 24h trigger from the spec
 // Throttles how often the Alpha Vantage fallback is actually *attempted*
@@ -472,6 +484,23 @@ export async function refreshRegimeData(): Promise<{ daysWritten: number; episod
       const [y10Obs, y2Obs] = await Promise.all([fetchFredSeriesWithDates("DGS10"), fetchFredSeriesWithDates("DGS2")]);
       let aligned = alignObservations(y10Obs, y2Obs).filter((o) => o.date >= REGIME_BACKFILL_START);
       lastFredObservedDate = aligned.length > 0 ? aligned[aligned.length - 1].date : null;
+
+      // Best-effort cross-check against FRED's own combined T10Y2Y series —
+      // never blocks or fails the refresh (see the comment on
+      // lastT10Y2YObservedDate above for why this exists).
+      try {
+        const t10y2yObs = await fetchFredSeriesWithDates("T10Y2Y");
+        const latestT10Y2Y = t10y2yObs[t10y2yObs.length - 1];
+        lastT10Y2YObservedDate = latestT10Y2Y?.date ?? null;
+        lastT10Y2YObservedValue = latestT10Y2Y?.value ?? null;
+        if (lastT10Y2YObservedDate && lastFredObservedDate && lastT10Y2YObservedDate > lastFredObservedDate) {
+          console.error(
+            `[yield-regime] FRED's T10Y2Y series (${lastT10Y2YObservedDate}) is ahead of its own DGS10/DGS2 series (${lastFredObservedDate}) — FRED-side publish lag, not fixable from this app's fetch logic.`
+          );
+        }
+      } catch (err) {
+        console.error(`[yield-regime] T10Y2Y cross-check fetch failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       usedAlphaVantageFallback = false;
       alphaVantageFallbackDates = [];
@@ -563,10 +592,22 @@ export interface RefreshDiagnostics {
   lastFredObservedDate: string | null; // newest date FRED itself returned on the last attempt, regardless of whether it was new
   usedAlphaVantageFallback: boolean; // true if the last attempt supplemented FRED with Alpha Vantage TREASURY_YIELD data
   alphaVantageFallbackDates: string[]; // which date(s), if any
+  lastT10Y2YObservedDate: string | null; // FRED's own combined T10Y2Y series latest date, for comparison — see the comment above lastT10Y2YObservedDate's declaration
+  lastT10Y2YObservedValue: number | null;
+  t10Y2YAheadOfComponents: boolean; // true when T10Y2Y's own latest date is newer than DGS10/DGS2's — a FRED-side publish-lag quirk, not a bug in this app
 }
 
 export function getLastRefreshDiagnostics(): RefreshDiagnostics {
-  return { lastRefreshAttemptAt, lastRefreshError, lastFredObservedDate, usedAlphaVantageFallback, alphaVantageFallbackDates };
+  return {
+    lastRefreshAttemptAt,
+    lastRefreshError,
+    lastFredObservedDate,
+    usedAlphaVantageFallback,
+    alphaVantageFallbackDates,
+    lastT10Y2YObservedDate,
+    lastT10Y2YObservedValue,
+    t10Y2YAheadOfComponents: Boolean(lastT10Y2YObservedDate && lastFredObservedDate && lastT10Y2YObservedDate > lastFredObservedDate),
+  };
 }
 
 export interface RegimeCurrentState {
