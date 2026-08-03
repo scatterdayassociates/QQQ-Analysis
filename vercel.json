@@ -3,6 +3,10 @@
     {
       "path": "/api/yield-regime/refresh",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/ai-earnings/refresh",
+      "schedule": "0 6 * * *"
     }
   ]
 }

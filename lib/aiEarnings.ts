@@ -10,14 +10,24 @@
 // exactly what each one captures — mirrors the reference implementation's
 // README table.
 //
-// Data source: AlphaVantage's CASH_FLOW and INCOME_STATEMENT endpoints
-// (reuses the same ALPHA_VANTAGE_API_KEY already configured for Catalyst
-// Tracker — no new key needed). Unlike every other external call in this
-// app, these have no bulk/all-companies mode: 2 endpoints x 9 tickers = 18
-// requests per fetch, a real chunk of the free tier's daily quota. Cached
-// for 24 hours (longer than anything else in this app) since quarterly
-// fundamentals only change 4x/year per ticker — there's no reason to
-// re-spend quota more often than that.
+// Data source: AlphaVantage's CASH_FLOW, INCOME_STATEMENT, and OVERVIEW
+// endpoints (reuses the same ALPHA_VANTAGE_API_KEY already configured for
+// Catalyst Tracker — no new key needed). Unlike every other external call
+// in this app, these have no bulk/all-companies mode: 3 endpoints x 9
+// tickers = 27 requests per full sweep, a real chunk of the free tier's
+// daily quota — and firing them concurrently (this file's original
+// Promise.all fan-out) reliably tripped Alpha Vantage's "burst pattern
+// detected" limiter, which flags request *clustering* independently of the
+// raw per-second count. Fixed two ways, together: (1) every real request
+// now goes through a single sequential queue (`sequenced`) with a
+// randomized 1-3s gap between calls, and (2) the whole sweep's result is
+// cached in-memory for 24h (`getAiEarningsCoreData`/`coreCache`) and
+// pre-warmed once a day by a Vercel Cron job (vercel.json ->
+// /api/ai-earnings/refresh), so an ordinary page view just reads the cache
+// instead of re-running all 27 requests — previously every tab view (every
+// component mount) re-ran the full sweep, whether or not anything had
+// changed. Same "cache + cron pre-warm + inline fallback on cache miss"
+// shape already used for the T10Y2Y Regime tab's MySQL refresh.
 //
 // Options richness cross-reference (optional, only computed when a caller
 // passes an expiration date): compares the options market's *implied* move
@@ -37,6 +47,37 @@ import { getCustomBars, getOptionChainSnapshot } from "./massive";
 
 const ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query";
 const FUNDAMENTALS_CACHE_SECONDS = 86_400; // 24h — fundamentals barely move intraday or even day-to-day
+
+// Alpha Vantage's free tier flags clusters of near-simultaneous requests as
+// a "burst pattern" ("query no more than 5 requests per second... spread
+// out your API requests more evenly") even when the raw per-second count is
+// technically under its cap — confirmed live: this file's original
+// Promise.all fan-out (18-27 requests fired essentially at once per full
+// screen refresh) reliably tripped it for CASH_FLOW/INCOME_STATEMENT calls.
+// Every real Alpha Vantage request in this file now goes through a single
+// sequential queue (see `sequenced` below) with a randomized 1-3s gap
+// between requests instead of firing concurrently.
+const REQUEST_SPACING_MIN_MS = 1_000;
+const REQUEST_SPACING_MAX_MS = 3_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomSpacingMs(): number {
+  return REQUEST_SPACING_MIN_MS + Math.random() * (REQUEST_SPACING_MAX_MS - REQUEST_SPACING_MIN_MS);
+}
+
+// Runs `fn` once per item, strictly one at a time, waiting a randomized
+// 1-3s between calls (not after the last one).
+async function sequenced<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    results.push(await fn(items[i]));
+    if (i < items.length - 1) await sleep(randomSpacingMs());
+  }
+  return results;
+}
 
 export interface AiEarningsTicker {
   ticker: string;
@@ -167,36 +208,34 @@ async function getEvToEbitdaByTicker(tickers: string[], notes: string[]): Promis
     return result;
   }
 
-  await Promise.all(
-    tickers.map(async (ticker) => {
-      try {
-        const url = new URL(ALPHA_VANTAGE_BASE);
-        url.searchParams.set("function", "OVERVIEW");
-        url.searchParams.set("symbol", ticker);
-        url.searchParams.set("apikey", apiKey);
-        const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
-        if (!res.ok) {
-          notes.push(`${ticker} OVERVIEW: HTTP ${res.status}`);
-          return;
-        }
-        const data = (await res.json()) as AlphaVantageOverviewResponse;
-        if (data.Information || data.Note) {
-          notes.push(`${ticker} OVERVIEW: ${(data.Information || data.Note || "").slice(0, 200)}`);
-          return;
-        }
-        const evToEbitda = Number(data.EVToEBITDA);
-        if (data.EVToEBITDA && data.EVToEBITDA !== "None" && Number.isFinite(evToEbitda)) {
-          result.set(ticker, evToEbitda);
-        } else {
-          notes.push(`${ticker} OVERVIEW: no usable EVToEBITDA (${data.EVToEBITDA ?? "missing"})`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[ai-earnings] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${msg}`);
-        notes.push(`${ticker} OVERVIEW: ${msg}`);
+  await sequenced(tickers, async (ticker) => {
+    try {
+      const url = new URL(ALPHA_VANTAGE_BASE);
+      url.searchParams.set("function", "OVERVIEW");
+      url.searchParams.set("symbol", ticker);
+      url.searchParams.set("apikey", apiKey);
+      const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+      if (!res.ok) {
+        notes.push(`${ticker} OVERVIEW: HTTP ${res.status}`);
+        return;
       }
-    })
-  );
+      const data = (await res.json()) as AlphaVantageOverviewResponse;
+      if (data.Information || data.Note) {
+        notes.push(`${ticker} OVERVIEW: ${(data.Information || data.Note || "").slice(0, 200)}`);
+        return;
+      }
+      const evToEbitda = Number(data.EVToEBITDA);
+      if (data.EVToEBITDA && data.EVToEBITDA !== "None" && Number.isFinite(evToEbitda)) {
+        result.set(ticker, evToEbitda);
+      } else {
+        notes.push(`${ticker} OVERVIEW: no usable EVToEBITDA (${data.EVToEBITDA ?? "missing"})`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[ai-earnings] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${msg}`);
+      notes.push(`${ticker} OVERVIEW: ${msg}`);
+    }
+  });
 
   return result;
 }
@@ -227,33 +266,75 @@ function financingDependency(q: QuarterMetrics): number | null {
   return (q.debtIssued + q.equityIssued) / q.capex;
 }
 
-// Pulls and aligns cash flow + income statement quarters by fiscalDateEnding.
-// Returns most-recent-first, up to numQuarters. Null if either statement is
-// unavailable (missing key, rate-limited, or errored) — the caller treats
-// this ticker as having no data rather than failing the whole screen.
-async function getQuarterlyMetrics(ticker: string, notes: string[], numQuarters = 8): Promise<QuarterMetrics[] | null> {
-  const [cf, inc] = await Promise.all([
-    fetchStatement("CASH_FLOW", ticker, notes),
-    fetchStatement("INCOME_STATEMENT", ticker, notes),
-  ]);
-  if (!cf || !inc) return null;
+// Pulls and aligns cash flow + income statement quarters by fiscalDateEnding
+// for every ticker, as ONE flat sequential queue of CASH_FLOW/INCOME_STATEMENT
+// jobs across the whole universe (18 requests for 9 tickers) rather than
+// per-ticker Promise.all pairs — see the `sequenced` helper's comment above;
+// fanning these out concurrently (even 2 at a time per ticker) was enough to
+// trip Alpha Vantage's burst detector across the full 9-ticker universe.
+// Returns most-recent-first quarters per ticker, up to numQuarters; null for
+// a ticker if either of its statements is unavailable (missing key,
+// rate-limited, or errored) — the caller treats that ticker as having no
+// data rather than failing the whole screen.
+type StatementKind = "CASH_FLOW" | "INCOME_STATEMENT";
 
-  const incByDate = new Map(inc.map((q) => [q.fiscalDateEnding, q]));
+async function getQuarterlyMetricsByTicker(
+  tickers: string[],
+  notes: string[],
+  numQuarters = 8
+): Promise<Map<string, QuarterMetrics[] | null>> {
+  const raw = new Map<string, { cf: AlphaVantageQuarterlyReport[] | null; inc: AlphaVantageQuarterlyReport[] | null }>();
+  for (const ticker of tickers) raw.set(ticker, { cf: null, inc: null });
 
-  return cf.slice(0, numQuarters).map((q) => {
-    const date = q.fiscalDateEnding ?? "";
-    const incQ = incByDate.get(date) ?? {};
-    return {
-      fiscalDateEnding: date,
-      operatingCashFlow: toFloat(q.operatingCashflow),
-      capex: toFloat(q.capitalExpenditures),
-      revenue: toFloat(incQ.totalRevenue),
-      debtIssued: toFloat(q.proceedsFromIssuanceOfLongTermDebt),
-      equityIssued: toFloat(q.proceedsFromIssuanceOfCommonStock),
-      buybacks: toFloat(q.paymentsForRepurchaseOfCommonStock),
-      interestExpense: toFloat(incQ.interestExpense),
-    };
+  // Checked once up front (rather than letting each of the 18 jobs discover
+  // it individually via fetchStatement) so a missing key skips straight to
+  // an empty result instead of still paying the full ~30s of inter-request
+  // spacing for jobs that were never going to make a real request anyway.
+  if (!process.env.ALPHA_VANTAGE_API_KEY?.trim()) {
+    notes.push("CASH_FLOW/INCOME_STATEMENT: ALPHA_VANTAGE_API_KEY is not set");
+    return new Map(tickers.map((t) => [t, null]));
+  }
+
+  const jobs: { ticker: string; kind: StatementKind }[] = [];
+  for (const ticker of tickers) {
+    jobs.push({ ticker, kind: "CASH_FLOW" });
+    jobs.push({ ticker, kind: "INCOME_STATEMENT" });
+  }
+
+  await sequenced(jobs, async ({ ticker, kind }) => {
+    const data = await fetchStatement(kind, ticker, notes);
+    const entry = raw.get(ticker)!;
+    if (kind === "CASH_FLOW") entry.cf = data;
+    else entry.inc = data;
   });
+
+  const result = new Map<string, QuarterMetrics[] | null>();
+  for (const ticker of tickers) {
+    const { cf, inc } = raw.get(ticker)!;
+    if (!cf || !inc) {
+      result.set(ticker, null);
+      continue;
+    }
+    const incByDate = new Map(inc.map((q) => [q.fiscalDateEnding, q]));
+    result.set(
+      ticker,
+      cf.slice(0, numQuarters).map((q) => {
+        const date = q.fiscalDateEnding ?? "";
+        const incQ = incByDate.get(date) ?? {};
+        return {
+          fiscalDateEnding: date,
+          operatingCashFlow: toFloat(q.operatingCashflow),
+          capex: toFloat(q.capitalExpenditures),
+          revenue: toFloat(incQ.totalRevenue),
+          debtIssued: toFloat(q.proceedsFromIssuanceOfLongTermDebt),
+          equityIssued: toFloat(q.proceedsFromIssuanceOfCommonStock),
+          buybacks: toFloat(q.paymentsForRepurchaseOfCommonStock),
+          interestExpense: toFloat(incQ.interestExpense),
+        };
+      })
+    );
+  }
+  return result;
 }
 
 // Slope proxy: most recent coverage ratio minus the ratio 4 quarters ago
@@ -372,7 +453,7 @@ async function computeAtmStraddle(ticker: string, expirationDate: string): Promi
 // established convention — see lib/overnightGap.ts's independent Finnhub
 // call — is per-module duplication over cross-file coupling for these
 // small, source-specific lookups). Reuses the same Alpha Vantage EARNINGS
-// endpoint and cache duration as getQuarterlyMetrics above.
+// endpoint and cache duration as fetchStatement above.
 async function getHistoricalReportDates(ticker: string, numQuarters: number): Promise<string[]> {
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
@@ -474,25 +555,30 @@ export interface AiEarningsData {
   diagnostics?: string[];
 }
 
-export async function getAiEarningsData(expiration?: string): Promise<AiEarningsData> {
+type AiEarningsCoreData = Omit<AiEarningsData, "optionsRichness">;
+
+// Does the real work: the full sequenced Alpha Vantage sweep (CASH_FLOW +
+// INCOME_STATEMENT for every ticker, then OVERVIEW for every ticker — never
+// concurrently, see `sequenced` above) plus the fragility scoring. This is
+// the slow, quota-hungry, burst-prone part (27 sequenced requests, ~30-80s
+// wall time) — kept separate from getAiEarningsCoreData's caching below so
+// it only ever runs from a controlled trigger (the daily cron, or a cache
+// miss), never once per page view.
+async function computeCoreAiEarningsData(): Promise<AiEarningsCoreData> {
   const notes: string[] = [];
-  const [perTicker, evToEbitdaByTicker] = await Promise.all([
-    Promise.all(
-      AI_EARNINGS_UNIVERSE.map(async (t) => {
-        const quarters = await getQuarterlyMetrics(t.ticker, notes);
-        return { meta: t, quarters };
-      })
-    ),
-    getEvToEbitdaByTicker(
-      AI_EARNINGS_UNIVERSE.map((t) => t.ticker),
-      notes
-    ),
-  ]);
+  const tickers = AI_EARNINGS_UNIVERSE.map((t) => t.ticker);
+
+  // Statements first, then EV/EBITDA — sequential phases, not concurrent
+  // Promise.all, so every one of the 27 real Alpha Vantage requests this
+  // function makes is spaced 1-3s from its neighbor, never just its
+  // within-phase neighbor.
+  const quartersByTicker = await getQuarterlyMetricsByTicker(tickers, notes);
+  const evToEbitdaByTicker = await getEvToEbitdaByTicker(tickers, notes);
 
   // Every ticker in AI_EARNINGS_UNIVERSE gets a row, always — previously a
   // ticker with a failed/rate-limited CASH_FLOW or INCOME_STATEMENT fetch
   // was dropped from the table entirely, which made the row count swing
-  // unpredictably (1, 2, 5...) load to load purely based on which of the 18
+  // unpredictably (1, 2, 5...) load to load purely based on which of the
   // concurrent Alpha Vantage requests happened to clear the rate limit that
   // particular time. A missing fetch now just leaves that ticker's metrics
   // null (rendered as "—" in the UI) instead of erasing the row, so the
@@ -501,7 +587,8 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
   // the "(X/9 tickers returned data)" indicator above the table.
   let tickersWithFundamentals = 0;
   const raw: (Omit<AiEarningsScore, "fragilityScore"> & { fragilityScore: null })[] = [];
-  for (const { meta, quarters } of perTicker) {
+  for (const meta of AI_EARNINGS_UNIVERSE) {
+    const quarters = quartersByTicker.get(meta.ticker) ?? null;
     const hasQuarters = quarters !== null && quarters.length > 0;
     if (hasQuarters) tickersWithFundamentals++;
     const latest = hasQuarters ? quarters![0] : null;
@@ -572,11 +659,84 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
     `[ai-earnings] ${tickersWithFundamentals}/${AI_EARNINGS_UNIVERSE.length} tickers returned usable fundamentals data (all ${scores.length} still shown in the table).`
   );
 
+  return {
+    asOf: new Date().toISOString().slice(0, 10),
+    scores,
+    tickersWithData: tickersWithFundamentals,
+    tickersRequested: AI_EARNINGS_UNIVERSE.length,
+    ...(notes.length > 0 ? { diagnostics: notes } : {}),
+  };
+}
+
+// In-memory cache for the core fundamentals screen — resets on cold start
+// (same best-effort convention already used for the T10Y2Y Regime tab's
+// Alpha Vantage fallback cooldown and this app's other in-memory caches),
+// but combined with the daily cron below, this is what turns "27 sequenced
+// Alpha Vantage requests, once per page view" into "once per 24h": every
+// ordinary tab load just returns whatever's already cached, at zero Alpha
+// Vantage cost, instead of re-running the sweep.
+const CORE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+let coreCache: (AiEarningsCoreData & { fetchedAt: number }) | null = null;
+let coreCacheInFlight: Promise<AiEarningsCoreData> | null = null;
+
+/**
+ * Returns the core fundamentals screen, using the in-memory cache if it's
+ * under 24h old. On a cache miss (cold start, or first run ever before the
+ * daily cron has fired) this runs the full sequenced sweep inline — slow
+ * (~30-80s) but correct, and only ever hit once until the cron catches up.
+ * Concurrent callers during a cold cache share one in-flight computation
+ * (`coreCacheInFlight`) rather than each kicking off their own 27-request
+ * sweep, which would just recreate the exact burst problem this was built
+ * to fix.
+ */
+export async function getAiEarningsCoreData(): Promise<AiEarningsCoreData> {
+  if (coreCache && Date.now() - coreCache.fetchedAt < CORE_CACHE_TTL_MS) {
+    const { fetchedAt: _fetchedAt, ...data } = coreCache;
+    return data;
+  }
+  if (coreCacheInFlight) return coreCacheInFlight;
+
+  coreCacheInFlight = (async () => {
+    const data = await computeCoreAiEarningsData();
+    coreCache = { ...data, fetchedAt: Date.now() };
+    return data;
+  })();
+
+  try {
+    return await coreCacheInFlight;
+  } finally {
+    coreCacheInFlight = null;
+  }
+}
+
+/** Forces a fresh sequenced sweep regardless of cache age — used by the daily cron (see app/api/ai-earnings/refresh/route.ts) to pre-warm getAiEarningsCoreData for every ordinary page view that day. */
+export async function refreshAiEarningsCoreData(): Promise<void> {
+  if (coreCacheInFlight) {
+    await coreCacheInFlight;
+    return;
+  }
+  coreCacheInFlight = computeCoreAiEarningsData();
+  try {
+    const data = await coreCacheInFlight;
+    coreCache = { ...data, fetchedAt: Date.now() };
+  } finally {
+    coreCacheInFlight = null;
+  }
+}
+
+export async function getAiEarningsData(expiration?: string): Promise<AiEarningsData> {
+  const core = await getAiEarningsCoreData();
+
   let optionsRichness: OptionsRichness[] | undefined;
   if (expiration) {
-    optionsRichness = await Promise.all(
-      AI_EARNINGS_UNIVERSE.map((t) => getOptionsRichness(t.ticker, expiration))
-    );
+    // Sequenced (not Promise.all) since getOptionsRichness's historical-move
+    // lookup hits Alpha Vantage's EARNINGS endpoint once per ticker — see
+    // the `sequenced` helper's comment above. Deliberately not covered by
+    // the 24h core cache: it's user-triggered (the "Load Options Richness"
+    // button) for a specific expiration date, not an automatic per-load
+    // fetch, so it isn't the source of the burst problem the cache above
+    // fixes, and caching it would show stale straddle prices.
+    optionsRichness = await sequenced(AI_EARNINGS_UNIVERSE, (t) => getOptionsRichness(t.ticker, expiration));
     const withStraddle = optionsRichness.filter((r) => r.straddle?.straddlePrice != null).length;
     console.error(
       `[ai-earnings] options richness for ${expiration}: ${withStraddle}/${AI_EARNINGS_UNIVERSE.length} tickers returned a straddle price.`
@@ -584,11 +744,7 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
   }
 
   return {
-    asOf: new Date().toISOString().slice(0, 10),
-    scores,
-    tickersWithData: tickersWithFundamentals,
-    tickersRequested: AI_EARNINGS_UNIVERSE.length,
+    ...core,
     ...(optionsRichness ? { optionsRichness } : {}),
-    ...(notes.length > 0 ? { diagnostics: notes } : {}),
   };
 }

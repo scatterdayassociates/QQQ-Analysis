@@ -173,17 +173,30 @@ infrastructure spend from operating cash flow or increasingly from debt/equity i
   Score — previously this column showed trailing P/E, swapped out per request. Shows "—" when
   EBITDA is negative or unavailable.
 - **Latest Qtr** is displayed as `MM/DD/YYYY`.
-- **Data source**: Alpha Vantage's `CASH_FLOW` and `INCOME_STATEMENT` endpoints (same
+- **Data source**: Alpha Vantage's `CASH_FLOW`, `INCOME_STATEMENT`, and `OVERVIEW` endpoints (same
   `ALPHA_VANTAGE_API_KEY` already used elsewhere — no new key needed). Unlike everything else in
-  this app, these have no bulk mode: **2 requests per ticker, 18 total per load (27 with
-  EV/EBITDA)** — the most expensive external call in the app by request count. Fundamentals cached
-  24 hours (`revalidate: 86400`) since they only change 4x/year; EV/EBITDA cached 1 hour. Every
+  this app, these have no bulk mode: **2 requests per ticker for fundamentals + 1 for EV/EBITDA,
+  27 total per full sweep** — the most expensive external call in the app by request count. Every
   ticker in the universe always gets a row in the table — previously a rate-limited or missing
   fetch dropped that ticker's row entirely, which made the row count swing unpredictably (1, 2, 5
-  tickers...) load to load purely based on which of the concurrent Alpha Vantage requests happened
-  to clear the rate limit; now a failed fetch just leaves that ticker's affected columns as "—",
+  tickers...) load to load; now a failed fetch just leaves that ticker's affected columns as "—",
   so the table is always exactly 9 rows. Check the "Fetch diagnostics" disclosure under the table
   (or Vercel logs for `[ai-earnings]` lines) to see exactly which tickers/fetches failed and why.
+- **Rate limiting.** Alpha Vantage's free tier flags clusters of near-simultaneous requests as a
+  "burst pattern" independently of the raw per-second count — firing all 27 requests concurrently
+  (this tab's original behavior) reliably triggered it. Every real request now goes through a
+  single sequential queue with a randomized 1-3s gap between calls (worst case ~80s for a full
+  sweep), and the result is cached in-memory for 24 hours (`getAiEarningsCoreData` in
+  `lib/aiEarnings.ts`) and pre-warmed once a day by a Vercel Cron job
+  (`/api/ai-earnings/refresh`, `vercel.json`) — same "cache + cron pre-warm" shape as the T10Y2Y
+  Regime tab's MySQL refresh. An ordinary page view just reads the 24h cache (near-instant, zero
+  Alpha Vantage cost) instead of re-running the full sweep on every tab visit. If the cache is
+  still cold (e.g. right after a fresh deploy, before the cron has fired once), the very next page
+  view runs the sweep inline instead — which is why both `/api/ai-earnings` and
+  `/api/ai-earnings/refresh` set `maxDuration = 120`; confirm the Vercel project's plan allows a
+  Function "Max Duration" that high (Hobby/Pro defaults are much lower and may need raising in the
+  dashboard). Options Richness (below) is a separate, user-triggered fetch and isn't covered by
+  this 24h cache, but its Alpha Vantage calls are sequenced the same way.
 - **Options Richness** (optional, computed only when an expiration date is entered in the tab):
   compares the options market's *implied* move into a given expiration against each ticker's own
   trailing *realized* earnings-day moves. **Implied Move** = ATM straddle price ÷ spot, from
@@ -305,7 +318,8 @@ app/
   api/fundamentals/route.ts   server route: fundamentals tab, calls Massive + FRED
   api/catalysts/route.ts      server route: catalyst tracker tab, calls Massive + Alpha Vantage
   api/overnight-gap/route.ts  server route: overnight gap view, calls Massive + Finnhub
-  api/ai-earnings/route.ts    server route: AI earnings analysis tab, calls Alpha Vantage
+  api/ai-earnings/route.ts    server route: AI earnings analysis tab, reads the 24h in-memory core cache
+  api/ai-earnings/refresh/route.ts    server route: the AI earnings sequenced Alpha Vantage sweep, triggered by vercel.json's daily cron or manually
   api/yield-regime/route.ts           server route: T10Y2Y regime tab, reads MySQL (self-healing from FRED)
   api/yield-regime/overlay/route.ts   server route: QQQ/TQQQ price overlay for the regime chart, calls Massive
   api/yield-regime/refresh/route.ts   server route: the regime refresh job, triggered by vercel.json's cron or manually
@@ -461,7 +475,9 @@ optional: without a `CRON_SECRET`, the refresh route is left open rather than re
 (same graceful-degradation pattern as everywhere else), and the read path
 (`ensureFreshRegimeData` in `lib/yieldRegime.ts`) still self-heals stale data on every request
 regardless of whether the cron ever fires — but setting one is recommended so the endpoint can't
-be spammed by anyone who finds the URL, especially now that it's meant to fire every hour.
+be spammed by anyone who finds the URL, especially now that it's meant to fire every hour. The
+same `CRON_SECRET` also protects `vercel.json`'s other cron entry, `/api/ai-earnings/refresh`
+(daily, see "Tab 4: AI Earnings Analysis" above) — one env var covers both.
 
 Every other tab works with no `DATABASE_URL` at all — omitting it just means the TBill Yield Spread Analysis
 tab shows a red error box (see "Troubleshooting" below) while every other tab is unaffected.
