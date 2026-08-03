@@ -408,16 +408,34 @@ export interface RegimeCurrentState {
   spread: number | null;
   y10: number | null;
   y2: number | null;
+  // The actual inputs to classifyRegime for the latest row — surfaced so
+  // the UI can show *why* a given label was assigned (e.g. an elevated
+  // spread level with a small dSpread correctly reads "Range-bound", since
+  // classification is driven by the lookback-window change, not the level).
+  d10y: number | null;
+  d2y: number | null;
+  dspread: number | null;
   regime: RegimeLabel | null;
   regimeStartDate: string | null;
   daysInRegime: number | null;
 }
 
 export async function getCurrentRegimeState(): Promise<RegimeCurrentState> {
-  const latestRows = await query("SELECT `date`, spread, y10, y2, regime FROM yield_regime_daily ORDER BY `date` DESC LIMIT 1");
+  const latestRows = await query("SELECT `date`, spread, y10, y2, d10y, d2y, dspread, regime FROM yield_regime_daily ORDER BY `date` DESC LIMIT 1");
   const latest = latestRows[0];
   if (!latest) {
-    return { asOfDate: null, spread: null, y10: null, y2: null, regime: null, regimeStartDate: null, daysInRegime: null };
+    return {
+      asOfDate: null,
+      spread: null,
+      y10: null,
+      y2: null,
+      d10y: null,
+      d2y: null,
+      dspread: null,
+      regime: null,
+      regimeStartDate: null,
+      daysInRegime: null,
+    };
   }
 
   const episodeRows = await query(
@@ -430,6 +448,9 @@ export async function getCurrentRegimeState(): Promise<RegimeCurrentState> {
     spread: Number(latest.spread),
     y10: Number(latest.y10),
     y2: Number(latest.y2),
+    d10y: latest.d10y === null ? null : Number(latest.d10y),
+    d2y: latest.d2y === null ? null : Number(latest.d2y),
+    dspread: latest.dspread === null ? null : Number(latest.dspread),
     regime: (latest.regime as RegimeLabel | null) ?? null,
     regimeStartDate: (currentEpisode?.start_date as string | undefined) ?? null,
     daysInRegime: (currentEpisode?.duration_trading_days as number | undefined) ?? null,

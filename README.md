@@ -205,7 +205,13 @@ each contiguous regime as a historical "episode," overlaid against QQQ/TQQQ pric
   tightening); moves that don't clearly fit either sub-case land in **Steepening (Mixed)** /
   **Flattening (Mixed)**; moves smaller than the threshold land in **Range-bound / No Signal**.
   Threshold and lookback default to 5bps change in the spread over 10 trading days
-  (`REGIME_THRESHOLD_BPS` / `REGIME_LOOKBACK_DAYS`).
+  (`REGIME_THRESHOLD_BPS` / `REGIME_LOOKBACK_DAYS`). **Classification is driven entirely by the
+  change in the spread over the lookback window, not the spread's absolute level** — an elevated
+  spread with a small recent change correctly reads "Range-bound / No Signal." The tab includes a
+  "Regime Definitions" reference table (strict bps thresholds + which leg — 2Y or 10Y — has to
+  dominate, per regime) built dynamically from the live `REGIME_THRESHOLD_BPS`/
+  `REGIME_LOOKBACK_DAYS` values, and the Current State card shows the actual Δ Spread/Δ10Y/Δ2Y
+  driving today's classification alongside the levels.
 - **Data source**: FRED's public `DGS10`/`DGS2` series (no API key, no rate limit) — the same
   free, key-free convention this app already uses for VIX/USD-index proxies on the Fundamental
   Analysis tab, extended here to also capture each observation's date. A day only counts toward

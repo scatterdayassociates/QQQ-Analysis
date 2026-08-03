@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureFreshRegimeData, getCurrentRegimeState, getLastRefreshDiagnostics, getRegimeEpisodes, getRegimeSeries } from "@/lib/yieldRegime";
+import {
+  ensureFreshRegimeData,
+  getCurrentRegimeState,
+  getLastRefreshDiagnostics,
+  getRegimeEpisodes,
+  getRegimeSeries,
+  REGIME_LOOKBACK_DAYS,
+  REGIME_THRESHOLD_BPS,
+} from "@/lib/yieldRegime";
 
 // Deliberately NOT `export const revalidate = N` like this app's other read
 // routes — this route's entire job is to re-check DB freshness and
@@ -20,7 +28,14 @@ export async function GET(req: NextRequest) {
   try {
     await ensureFreshRegimeData();
     const [current, series, episodes] = await Promise.all([getCurrentRegimeState(), getRegimeSeries(range), getRegimeEpisodes()]);
-    return NextResponse.json({ current, series, episodes, range, refresh: getLastRefreshDiagnostics() });
+    return NextResponse.json({
+      current,
+      series,
+      episodes,
+      range,
+      refresh: getLastRefreshDiagnostics(),
+      config: { thresholdBps: REGIME_THRESHOLD_BPS, lookbackDays: REGIME_LOOKBACK_DAYS },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 502 });

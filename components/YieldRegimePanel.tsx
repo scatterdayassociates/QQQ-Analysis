@@ -17,12 +17,18 @@ const ALL_REGIMES: RegimeLabel[] = [
   "Range-bound / No Signal",
 ];
 
+interface RegimeConfig {
+  thresholdBps: number;
+  lookbackDays: number;
+}
+
 interface YieldRegimeResponse {
   current: RegimeCurrentState;
   series: DailyRegimeRow[];
   episodes: RegimeEpisode[];
   range: string;
   refresh: RefreshDiagnostics;
+  config: RegimeConfig;
 }
 
 function fmtPct(v: number | null, digits = 2): string {
@@ -34,6 +40,14 @@ function fmtSignedPct(v: number | null, digits = 2): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
 }
 
+// Stored spread/yield values are percentage points (e.g. 0.45 = 0.45%);
+// 1 percentage point = 100bps, so bps = value * 100.
+function fmtBps(v: number | null): string {
+  if (v === null) return "—";
+  const bps = v * 100;
+  return `${bps >= 0 ? "+" : ""}${bps.toFixed(0)}bps`;
+}
+
 function pctClass(v: number | null): string {
   if (v === null) return "";
   return v >= 0 ? "up" : "down";
@@ -42,6 +56,67 @@ function pctClass(v: number | null): string {
 function RegimeChip({ regime }: { regime: RegimeLabel | null }) {
   if (!regime) return <span>—</span>;
   return <span className={`regime-chip regime-${regimeSlug(regime)}`}>{regime}</span>;
+}
+
+interface RegimeDefinition {
+  regime: RegimeLabel;
+  spreadCondition: string;
+  legCondition: string;
+  interpretation: string;
+}
+
+// Strict definitions transcribed directly from classifyRegime in
+// lib/yieldRegime.ts — kept here as plain data (not derived from the live
+// function) since this is a client component; REGIME_THRESHOLD_BPS /
+// REGIME_LOOKBACK_DAYS come from the API response so the bps/day figures
+// shown always match what the server actually applied, even if those env
+// vars are overridden from their defaults.
+function buildRegimeDefinitions(config: RegimeConfig): RegimeDefinition[] {
+  const t = config.thresholdBps;
+  return [
+    {
+      regime: "Growth Steepening",
+      spreadCondition: `Δ Spread > +${t}bps`,
+      legCondition: "|Δ2Y| > |Δ10Y| AND Δ2Y < 0 — 2Y leads, falling",
+      interpretation: "Rate-cut expectations building at the front end; typically NDX-supportive.",
+    },
+    {
+      regime: "Term Premium Steepening",
+      spreadCondition: `Δ Spread > +${t}bps`,
+      legCondition: "Δ10Y > 0 AND |Δ10Y| ≥ |Δ2Y| — 10Y leads, rising",
+      interpretation: "Inflation/fiscal/supply concerns pushing the long end up; headwind for duration-sensitive names.",
+    },
+    {
+      regime: "Steepening (Mixed)",
+      spreadCondition: `Δ Spread > +${t}bps`,
+      legCondition: "Neither leg-dominance condition above is met",
+      interpretation: "Spread widened, but no single leg clearly drove it.",
+    },
+    {
+      regime: "Bull Flattening",
+      spreadCondition: `Δ Spread < -${t}bps`,
+      legCondition: "Δ10Y < 0 AND |Δ10Y| ≥ |Δ2Y| — 10Y leads, falling",
+      interpretation: "Long end rallying on growth/recession fear; ambiguous for NDX depending on which.",
+    },
+    {
+      regime: "Bear Flattening",
+      spreadCondition: `Δ Spread < -${t}bps`,
+      legCondition: "Δ2Y > 0 AND |Δ2Y| ≥ |Δ10Y| — 2Y leads, rising",
+      interpretation: "Fed hiking, front end rising faster than long end; classic late-cycle tightening signal.",
+    },
+    {
+      regime: "Flattening (Mixed)",
+      spreadCondition: `Δ Spread < -${t}bps`,
+      legCondition: "Neither leg-dominance condition above is met",
+      interpretation: "Spread narrowed, but no single leg clearly drove it.",
+    },
+    {
+      regime: "Range-bound / No Signal",
+      spreadCondition: `-${t}bps ≤ Δ Spread ≤ +${t}bps`,
+      legCondition: "Not evaluated — level-independent",
+      interpretation: "Spread change is within the noise threshold over the lookback window, regardless of the spread's absolute level.",
+    },
+  ];
 }
 
 export default function YieldRegimePanel() {
@@ -174,8 +249,25 @@ export default function YieldRegimePanel() {
                 <span className="k">2Y Yield</span>
                 <span className="v mono">{fmtPct(data.current.y2)}</span>
               </div>
+              <div className="stat">
+                <span className="k">Δ Spread ({data.config.lookbackDays}D)</span>
+                <span className={`v mono ${pctClass(data.current.dspread)}`}>{fmtBps(data.current.dspread)}</span>
+              </div>
+              <div className="stat">
+                <span className="k">Δ 10Y ({data.config.lookbackDays}D)</span>
+                <span className={`v mono ${pctClass(data.current.d10y)}`}>{fmtBps(data.current.d10y)}</span>
+              </div>
+              <div className="stat">
+                <span className="k">Δ 2Y ({data.config.lookbackDays}D)</span>
+                <span className={`v mono ${pctClass(data.current.d2y)}`}>{fmtBps(data.current.d2y)}</span>
+              </div>
             </div>
-            <p className="data-as-of">Treasury data as of {data.current.asOfDate ?? "—"} (FRED DGS10/DGS2).</p>
+            <p className="data-as-of">
+              Treasury data as of {data.current.asOfDate ?? "—"} (FRED DGS10/DGS2). Classification is driven by the
+              Δ Spread column above (change over the last {data.config.lookbackDays} trading days vs. the
+              ±{data.config.thresholdBps}bps threshold) — <strong>not</strong> the Spread level itself. An elevated
+              level with a small Δ correctly reads &ldquo;Range-bound&rdquo;; see Regime Definitions below.
+            </p>
             {data.refresh.lastRefreshAttemptAt && (
               <p className={`data-as-of${data.refresh.lastRefreshError ? " data-as-of-warning" : ""}`}>
                 Last refresh check: {new Date(data.refresh.lastRefreshAttemptAt).toLocaleString()} · newest FRED
@@ -183,6 +275,40 @@ export default function YieldRegimePanel() {
                 {data.refresh.lastRefreshError ? ` · failed: ${data.refresh.lastRefreshError}` : ""}
               </p>
             )}
+          </div>
+
+          <div className="card">
+            <div className="chart-label">Regime Definitions</div>
+            <div className="table-wrap">
+              <table className="mono">
+                <thead>
+                  <tr>
+                    <th>Regime</th>
+                    <th>Spread Δ ({data.config.lookbackDays}D) Condition</th>
+                    <th>Leg-Dominance Condition</th>
+                    <th>Interpretation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {buildRegimeDefinitions(data.config).map((def) => (
+                    <tr key={def.regime}>
+                      <td>
+                        <RegimeChip regime={def.regime} />
+                      </td>
+                      <td>{def.spreadCondition}</td>
+                      <td>{def.legCondition}</td>
+                      <td>{def.interpretation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="footnote">
+              Δ2Y/Δ10Y/Δ Spread are each computed as (today&apos;s yield/spread) − (yield/spread {data.config.lookbackDays}{" "}
+              trading days ago); Δ Spread always equals Δ10Y − Δ2Y exactly. Thresholds are configurable via{" "}
+              <code>REGIME_THRESHOLD_BPS</code> (currently {data.config.thresholdBps}bps) and{" "}
+              <code>REGIME_LOOKBACK_DAYS</code> (currently {data.config.lookbackDays} trading days).
+            </p>
           </div>
 
           <div className="card">
