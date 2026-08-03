@@ -815,6 +815,12 @@ tbody tr.active td {
   color: var(--down);
 }
 
+.event-chip.tier-4 {
+  background: color-mix(in srgb, var(--accent-tqqq) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-tqqq) 45%, var(--border));
+  color: var(--accent-tqqq);
+}
+
 /* ---------- fundamental analysis ---------- */
 
 .chart-label {

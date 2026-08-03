@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AiEarningsData, AiEarningsScore, OptionsRichness } from "@/lib/aiEarnings";
 
-const TIER_LABELS: Record<1 | 2 | 3, string> = {
+const TIER_LABELS: Record<1 | 2 | 3 | 4, string> = {
   1: "Hyperscaler",
   2: "Leveraged Buyer",
   3: "Credit-Risk Tail",
+  4: "Memory Makers",
 };
 
 function richnessClass(v: number | null): string {
@@ -243,14 +244,20 @@ export default function AIEarningsPanel() {
       <div className="footnote">
         <p>
           <strong>Methodology.</strong> Screens a fixed universe (Alphabet, Microsoft, Meta, Amazon,
-          Oracle, CoreWeave) tiered by capex-funding posture — Tier 1 hyperscalers still funding
-          mostly from operations (so far), Tier 2 leveraged buyers increasingly using debt/equity
-          issuance, Tier 3 the highest-beta/credit-risk names most exposed if the cycle cracks. All
-          figures come from Alpha Vantage&apos;s <code>CASH_FLOW</code> and{" "}
-          <code>INCOME_STATEMENT</code> endpoints (same <code>ALPHA_VANTAGE_API_KEY</code> used
-          elsewhere in this app) — 2 requests per ticker, 12 total per load (18 with P/E Ratio below),
-          cached 24 hours since quarterly fundamentals only change 4x/year; a rate-limited or missing
-          ticker just drops out of the table rather than failing the page.
+          Oracle, CoreWeave, SK Hynix, Micron, Sandisk) tiered by capex-funding posture — Tier 1
+          hyperscalers still funding mostly from operations (so far), Tier 2 leveraged buyers
+          increasingly using debt/equity issuance, Tier 3 the highest-beta/credit-risk names most
+          exposed if the cycle cracks, Tier 4 Memory Makers — the AI-capex memory/storage
+          <em> suppliers</em> rather than buyers, included as a related but distinct cohort (same
+          fragility metrics, not force-fit into the buyer-side tiers above). All figures come from
+          Alpha Vantage&apos;s <code>CASH_FLOW</code> and <code>INCOME_STATEMENT</code> endpoints
+          (same <code>ALPHA_VANTAGE_API_KEY</code> used elsewhere in this app) — 2 requests per
+          ticker, 18 total per load (27 with P/E Ratio below), cached 24 hours since quarterly
+          fundamentals only change 4x/year; a rate-limited or missing ticker just drops out of the
+          table rather than failing the page. The Fragility Score is cross-sectional across the
+          <em> entire</em> universe (all four tiers together, not scored separately per tier) —
+          adding Tier 4 shifts the comparison pool for every ticker&apos;s z-score, same as any
+          universe change would.
         </p>
         <p>
           <strong>P/E Ratio</strong> is trailing P/E from Alpha Vantage&apos;s <code>OVERVIEW</code>{" "}

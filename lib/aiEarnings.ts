@@ -13,7 +13,7 @@
 // Data source: AlphaVantage's CASH_FLOW and INCOME_STATEMENT endpoints
 // (reuses the same ALPHA_VANTAGE_API_KEY already configured for Catalyst
 // Tracker — no new key needed). Unlike every other external call in this
-// app, these have no bulk/all-companies mode: 2 endpoints x 6 tickers = 12
+// app, these have no bulk/all-companies mode: 2 endpoints x 9 tickers = 18
 // requests per fetch, a real chunk of the free tier's daily quota. Cached
 // for 24 hours (longer than anything else in this app) since quarterly
 // fundamentals only change 4x/year per ticker — there's no reason to
@@ -41,10 +41,14 @@ const FUNDAMENTALS_CACHE_SECONDS = 86_400; // 24h — fundamentals barely move i
 export interface AiEarningsTicker {
   ticker: string;
   name: string;
-  tier: 1 | 2 | 3; // 1 = hyperscaler, 2 = leveraged buyer, 3 = credit-risk tail
+  tier: 1 | 2 | 3 | 4; // 1 = hyperscaler, 2 = leveraged buyer, 3 = credit-risk tail, 4 = memory makers
 }
 
 // The buyer universe, tiered per the reference implementation's thesis.
+// Tier 4 (memory makers) is a separate category from the original
+// hyperscaler/leveraged-buyer/credit-risk framing — these are AI-capex
+// *suppliers* (memory/storage), not buyers, included as a related but
+// distinct cohort rather than force-fit into tiers 1-3.
 export const AI_EARNINGS_UNIVERSE: AiEarningsTicker[] = [
   { ticker: "GOOGL", name: "Alphabet", tier: 1 },
   { ticker: "MSFT", name: "Microsoft", tier: 1 },
@@ -52,6 +56,9 @@ export const AI_EARNINGS_UNIVERSE: AiEarningsTicker[] = [
   { ticker: "AMZN", name: "Amazon", tier: 1 },
   { ticker: "ORCL", name: "Oracle", tier: 2 },
   { ticker: "CRWV", name: "CoreWeave", tier: 3 },
+  { ticker: "SKHY", name: "SK Hynix", tier: 4 },
+  { ticker: "MU", name: "Micron", tier: 4 },
+  { ticker: "SNDK", name: "Sandisk", tier: 4 },
 ];
 
 // Weights for the composite Buyer Fragility Score — same as the reference
@@ -284,7 +291,7 @@ function trailingAverage(quarters: QuarterMetrics[], metric: (q: QuarterMetrics)
 export interface AiEarningsScore {
   ticker: string;
   name: string;
-  tier: 1 | 2 | 3;
+  tier: 1 | 2 | 3 | 4;
   peRatio: number | null; // trailing P/E, null if unprofitable (negative EPS) or unavailable
   latestQuarter: string;
   capexCoverageRatio: number | null;

@@ -154,8 +154,12 @@ infrastructure spend from operating cash flow or increasingly from debt/equity i
 - **Universe**: Alphabet, Microsoft, Meta, Amazon (Tier 1 — hyperscalers funding capex mostly
   from operations, so far), Oracle (Tier 2 — leveraged buyer increasingly using debt/equity
   issuance), CoreWeave (Tier 3 — highest-beta/credit-risk name most exposed if the cycle
-  cracks). This is a separate, purpose-built universe from Catalyst Tracker's top-10 list, not
-  a subset of it.
+  cracks), SK Hynix (`SKHY`), Micron (`MU`), Sandisk (`SNDK`) (Tier 4 — "Memory Makers," the
+  AI-capex memory/storage *suppliers* rather than buyers; a related but distinct cohort from
+  Tiers 1-3, same fragility metrics computed the same way). This is a separate, purpose-built
+  universe from Catalyst Tracker's top-10 list, not a subset of it. All four tiers share one
+  cross-sectional Fragility Score — z-scores are computed across the whole universe together, not
+  per tier, so adding Tier 4 shifts the comparison baseline for every ticker.
 - **Metrics** (all computed from real quarterly statement data, not fabricated): capex coverage
   ratio (OCF ÷ capex, latest quarter), capex-to-revenue and financing dependency (debt+equity
   issued ÷ capex, both trailing 4-quarter averages so a single one-off raise doesn't outrank a
