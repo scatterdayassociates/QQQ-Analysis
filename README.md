@@ -12,14 +12,14 @@ A lightweight Next.js dashboard with five tabs:
 4. **AI Earnings Analysis** — an AI-capex buyer fragility screen across a small tiered universe
    (Alphabet, Microsoft, Meta, Amazon, Oracle, CoreWeave), scoring whether each is still funding
    infrastructure spend from operating cash flow or increasingly from debt/equity issuance.
-5. **T10Y2Y Regime** — classifies the 10Y-2Y Treasury yield curve on two independent axes: Regime
+5. **TBill Yield Spread Analysis** — classifies the 10Y-2Y Treasury yield curve on two independent axes: Regime
    (growth vs. term-premium steepening, bull vs. bear flattening — driven by recent change) and
    Level (inverted/flat/normal/steep — driven by today's absolute spread), tracks each Regime as a
    historical episode, and overlays QQQ/TQQQ price action against the timeline.
 
 Powered by the [Massive](https://massive.com) (formerly Polygon.io) market data API, plus
 free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inputs (see below).
-The T10Y2Y Regime tab additionally requires a MySQL database — see its own section below; every
+The TBill Yield Spread Analysis tab additionally requires a MySQL database — see its own section below; every
 other tab computes its data on demand and needs no database.
 
 ## Tab 1: Intraday Daypart
@@ -202,7 +202,7 @@ No charting library, no CSS framework — just React, plain CSS, and hand-rolled
 chart for volume + volatility, and a semicircle gauge for aggregate strength), to keep the
 bundle small.
 
-## Tab 5: T10Y2Y Regime Classification
+## Tab 5: TBill Yield Spread Analysis
 
 Classifies the 10Y-2Y Treasury spread on **two independent axes**, tracks contiguous Regime
 episodes as historical "episodes," and overlays both against QQQ/TQQQ price action.
@@ -266,7 +266,7 @@ episodes as historical "episodes," and overlays both against QQQ/TQQQ price acti
 - **Persistence — the one tab in this app with a database.** Every other tab computes its data
   fresh on each request; this one is backed by MySQL because its episode table is derived by
   walking the *entire* yield history, which is too expensive to redo on every page load. See
-  "T10Y2Y Regime database setup" below for the connection string and schema. Data is kept fresh
+  "TBill Yield Spread Analysis database setup" below for the connection string and schema. Data is kept fresh
   automatically — every read checks whether the newest stored trading day is current and
   re-fetches/recomputes if not — so correctness never depends on the optional Vercel Cron job
   (`vercel.json`, hits `/api/yield-regime/refresh` **hourly**) actually firing; that cron just
@@ -314,9 +314,9 @@ lib/fundamentals.ts          7-metric scoring model + tactical decision logic (s
 lib/catalysts.ts             top-10 list + macro calendar + 1-day reaction calc (server-only)
 lib/overnightGap.ts          close-to-open gap calc + catalyst tagging, reuses catalysts.ts's list/calendar
 lib/aiEarnings.ts            capex fragility screen: fundamentals fetch + cross-sectional scoring (server-only)
-lib/db.ts                    MySQL pool + schema setup (server-only) — used only by the T10Y2Y Regime tab
+lib/db.ts                    MySQL pool + schema setup (server-only) — used only by the TBill Yield Spread Analysis tab
 lib/yieldRegime.ts           FRED fetch + regime classification + episode roll-up + MySQL read/write (server-only)
-components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis / T10Y2Y Regime)
+components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis / TBill Yield Spread Analysis)
 components/DaypartPanel.tsx       manages the list of date-range entries (up to 5), the add/remove UI, and the sub-nav to Overnight Gap
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
@@ -369,9 +369,9 @@ FINNHUB_API_KEY=your_finnhub_api_key_here
 The app works fine without either — Upcoming Catalysts just won't show Earnings rows, and
 Overnight Gap just won't tag historical earnings dates.
 
-### T10Y2Y Regime database setup (required only for that tab)
+### TBill Yield Spread Analysis database setup (required only for that tab)
 
-Every other tab computes its data fresh on each request; the T10Y2Y Regime tab is the one
+Every other tab computes its data fresh on each request; the TBill Yield Spread Analysis tab is the one
 exception — it needs MySQL to store the regime episode history (see the tab's own section above
 for why). Point it at any MySQL 8 instance — a managed one (DigitalOcean, PlanetScale, RDS) or
 local — via a single connection-string env var:
@@ -463,7 +463,7 @@ optional: without a `CRON_SECRET`, the refresh route is left open rather than re
 regardless of whether the cron ever fires — but setting one is recommended so the endpoint can't
 be spammed by anyone who finds the URL, especially now that it's meant to fire every hour.
 
-Every other tab works with no `DATABASE_URL` at all — omitting it just means the T10Y2Y Regime
+Every other tab works with no `DATABASE_URL` at all — omitting it just means the TBill Yield Spread Analysis
 tab shows a red error box (see "Troubleshooting" below) while every other tab is unaffected.
 
 Then run the dev server:
@@ -576,7 +576,7 @@ excludes it.
   Look for a top-level `"Information"` or `"Note"` field in the JSON — that's Alpha Vantage's
   rate-limit/quota message, not real data, and the app's logs call this out per-ticker rather
   than silently treating it as "no earnings."
-- **T10Y2Y Regime tab shows a red error box** — almost always `DATABASE_URL` isn't set for the
+- **TBill Yield Spread Analysis tab shows a red error box** — almost always `DATABASE_URL` isn't set for the
   environment serving the request (this is the one tab in the app that needs it; every other tab
   is unaffected). Confirm it's set for the right Vercel environment (Production vs. Preview are
   separate) and that you redeployed after adding it. If `DATABASE_URL` is set but you still see an
@@ -615,13 +615,13 @@ excludes it.
     `DATABASE_URL` was last set, or a different (old) password got copied in by mistake. Re-check
     the current password directly in the DigitalOcean control panel and rebuild `DATABASE_URL`
     from scratch rather than editing the existing value.
-- **T10Y2Y Regime tab loads but the episode table is empty while the daily detail table has
+- **TBill Yield Spread Analysis tab loads but the episode table is empty while the daily detail table has
   rows** — this means the regime computation ran but every day so far falls in the first
   `REGIME_LOOKBACK_DAYS` rows of your configured `REGIME_BACKFILL_START` (which have no
   `regime` yet, since there isn't enough trailing history for a lookback comparison) — wait for
   more days to accumulate, or move `REGIME_BACKFILL_START` earlier so there's already 10+ trading
   days of history before the range you care about.
-- **T10Y2Y Regime data looks stale (showing a date more than ~1 business day old)** — check the
+- **TBill Yield Spread Analysis data looks stale (showing a date more than ~1 business day old)** — check the
   "Last refresh check" line under the Current State card first; it shows when this server instance
   last attempted a refresh, what the newest FRED observation it saw was, and any error. Two
   different things can cause this, and that line tells you which:
@@ -661,7 +661,7 @@ elsewhere, no new plan tier. It also makes one Finnhub call (historical earnings
 Catalyst Tracker's Alpha Vantage-based upcoming-earnings call) — same free API key already set up
 for that, no extra signup.
 
-**Cost/rate-limit note for T10Y2Y Regime**: FRED's `DGS10`/`DGS2` CSV endpoints have no published
+**Cost/rate-limit note for TBill Yield Spread Analysis**: FRED's `DGS10`/`DGS2` CSV endpoints have no published
 rate limit and need no API key, so the daily refresh (whether triggered by the cron or by a
 stale-data read) costs nothing there. The refresh also fetches QQQ's full daily history once
 (same Stocks Starter entitlement as everywhere else) to compute each episode's % change — cheap,

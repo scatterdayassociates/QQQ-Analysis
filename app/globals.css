@@ -60,6 +60,17 @@ body {
   padding: 2.25rem 1.25rem 4rem;
 }
 
+/* Opt-in per-tab override: widens just that tab's content past .page's
+   1040px cap via negative margins (breaks out of the centered container
+   rather than raising the cap for every tab). Currently only used by the
+   TBill Yield Spread Analysis tab, whose Current State readout needs the
+   extra ~80px to fit all nine stats on one row. */
+.wide-tab {
+  width: calc(100% + 80px);
+  margin-left: -40px;
+  margin-right: -40px;
+}
+
 /* ---------- header ---------- */
 
 .eyebrow {

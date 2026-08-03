@@ -12,7 +12,7 @@ const TABS = [
   { key: "fundamentals", label: "Fundamental Analysis" },
   { key: "catalysts", label: "Catalyst Tracker" },
   { key: "ai-earnings", label: "AI Earnings Analysis" },
-  { key: "yield-regime", label: "T10Y2Y Regime" },
+  { key: "yield-regime", label: "TBill Yield Spread Analysis" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];

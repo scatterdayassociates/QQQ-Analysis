@@ -246,10 +246,10 @@ export default function YieldRegimePanel() {
   const qqqAsOf = qqqOverlay && qqqOverlay.length > 0 ? qqqOverlay[qqqOverlay.length - 1].date : null;
 
   return (
-    <section>
+    <section className="wide-tab">
       <div className="page-header">
         <div>
-          <h1>T10Y2Y Regime Classification</h1>
+          <h1>TBill Yield Spread Analysis</h1>
           <p className="subtitle">
             Classifies the 10Y-2Y Treasury yield curve on two independent axes — Regime (Momentum: growth-driven
             vs. term-premium-driven steepening, bull vs. bear flattening) and Level (where the spread sits
@@ -336,73 +336,6 @@ export default function YieldRegimePanel() {
                 {data.refresh.lastRefreshError ? ` · failed: ${data.refresh.lastRefreshError}` : ""}
               </p>
             )}
-          </div>
-
-          <div className="card">
-            <div className="chart-label">Regime Definitions — Momentum Axis</div>
-            <div className="table-wrap">
-              <table className="mono">
-                <thead>
-                  <tr>
-                    <th>Regime</th>
-                    <th>Spread Δ ({data.config.lookbackDays}D) Condition</th>
-                    <th>Leg-Dominance Condition</th>
-                    <th>Interpretation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {buildRegimeDefinitions(data.config).map((def) => (
-                    <tr key={def.regime}>
-                      <td>
-                        <RegimeChip regime={def.regime} />
-                      </td>
-                      <td>{def.spreadCondition}</td>
-                      <td>{def.legCondition}</td>
-                      <td>{def.interpretation}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="footnote">
-              Δ2Y/Δ10Y/Δ Spread are each computed as (today&apos;s yield/spread) − (yield/spread {data.config.lookbackDays}{" "}
-              trading days ago); Δ Spread always equals Δ10Y − Δ2Y exactly. Thresholds are configurable via{" "}
-              <code>REGIME_THRESHOLD_BPS</code> (currently {data.config.thresholdBps}bps) and{" "}
-              <code>REGIME_LOOKBACK_DAYS</code> (currently {data.config.lookbackDays} trading days).
-            </p>
-
-            <div className="chart-label" style={{ marginTop: "1.4rem" }}>
-              Level Definitions — Absolute Axis
-            </div>
-            <div className="table-wrap">
-              <table className="mono">
-                <thead>
-                  <tr>
-                    <th>Level</th>
-                    <th>Spread Condition</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {buildLevelDefinitions(data.config).map((def) => (
-                    <tr key={def.band}>
-                      <td>
-                        <LevelChip band={def.band} />
-                      </td>
-                      <td>{def.condition}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="footnote">
-              Level classifies <strong>today&apos;s spread value in isolation</strong> — it never looks at recent
-              change, so it&apos;s entirely independent of the Momentum axis above (a name can be Range-bound
-              (Momentum) and Steep (Level) at the same time — those are two separate true facts, not a
-              contradiction). Cutoffs are configurable via <code>REGIME_LEVEL_DEEP_INVERSION_BPS</code> (currently{" "}
-              {data.config.levelDeepInversionBps}bps), <code>REGIME_LEVEL_NORMAL_BPS</code> (currently{" "}
-              {data.config.levelNormalBps}bps), and <code>REGIME_LEVEL_STEEP_BPS</code> (currently{" "}
-              {data.config.levelSteepBps}bps).
-            </p>
           </div>
 
           <div className="card">
@@ -528,6 +461,84 @@ export default function YieldRegimePanel() {
 
             {showQqq && <p className="data-as-of">QQQ price data as of {qqqAsOf ?? "loading…"} (Massive Custom Bars).</p>}
           </div>
+
+          <details className="card table-accordion">
+            <summary>
+              <span>Regime &amp; Level Definitions</span>
+              <span className="table-accordion-meta mono">
+                <span className="table-accordion-count">7 momentum states · 5 level bands</span>
+                <svg className="table-accordion-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                  <path d="M5 3 L11 8 L5 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </summary>
+            <div className="table-accordion-body">
+              <div className="chart-label">Regime Definitions — Momentum Axis</div>
+              <div className="table-wrap">
+                <table className="mono">
+                  <thead>
+                    <tr>
+                      <th>Regime</th>
+                      <th>Spread Δ ({data.config.lookbackDays}D) Condition</th>
+                      <th>Leg-Dominance Condition</th>
+                      <th>Interpretation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buildRegimeDefinitions(data.config).map((def) => (
+                      <tr key={def.regime}>
+                        <td>
+                          <RegimeChip regime={def.regime} />
+                        </td>
+                        <td>{def.spreadCondition}</td>
+                        <td>{def.legCondition}</td>
+                        <td>{def.interpretation}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="footnote">
+                Δ2Y/Δ10Y/Δ Spread are each computed as (today&apos;s yield/spread) − (yield/spread {data.config.lookbackDays}{" "}
+                trading days ago); Δ Spread always equals Δ10Y − Δ2Y exactly. Thresholds are configurable via{" "}
+                <code>REGIME_THRESHOLD_BPS</code> (currently {data.config.thresholdBps}bps) and{" "}
+                <code>REGIME_LOOKBACK_DAYS</code> (currently {data.config.lookbackDays} trading days).
+              </p>
+
+              <div className="chart-label" style={{ marginTop: "1.4rem" }}>
+                Level Definitions — Absolute Axis
+              </div>
+              <div className="table-wrap">
+                <table className="mono">
+                  <thead>
+                    <tr>
+                      <th>Level</th>
+                      <th>Spread Condition</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buildLevelDefinitions(data.config).map((def) => (
+                      <tr key={def.band}>
+                        <td>
+                          <LevelChip band={def.band} />
+                        </td>
+                        <td>{def.condition}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="footnote">
+                Level classifies <strong>today&apos;s spread value in isolation</strong> — it never looks at recent
+                change, so it&apos;s entirely independent of the Momentum axis above (a name can be Range-bound
+                (Momentum) and Steep (Level) at the same time — those are two separate true facts, not a
+                contradiction). Cutoffs are configurable via <code>REGIME_LEVEL_DEEP_INVERSION_BPS</code> (currently{" "}
+                {data.config.levelDeepInversionBps}bps), <code>REGIME_LEVEL_NORMAL_BPS</code> (currently{" "}
+                {data.config.levelNormalBps}bps), and <code>REGIME_LEVEL_STEEP_BPS</code> (currently{" "}
+                {data.config.levelSteepBps}bps).
+              </p>
+            </div>
+          </details>
 
           <div className="card">
             <div className="chart-label">Regime Episode History ({episodes.length})</div>
