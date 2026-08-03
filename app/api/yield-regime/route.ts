@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureFreshRegimeData, getCurrentRegimeState, getLastRefreshDiagnostics, getRegimeEpisodes, getRegimeSeries } from "@/lib/yieldRegime";
 
-export const revalidate = 3600; // regime state changes at most once per trading day; ensureFreshRegimeData is the real freshness gate
+// Deliberately NOT `export const revalidate = N` like this app's other read
+// routes — this route's entire job is to re-check DB freshness and
+// self-heal on every request (see ensureFreshRegimeData). Caching this
+// route's own JSON response would freeze that freshness decision at
+// whatever it was when the cache was populated, silently undermining the
+// self-heal regardless of what the hourly cron writes to MySQL in the
+// meantime — confirmed live as the actual cause of a multi-day-stale
+// T10Y2Y Regime tab even though the database itself was current.
+export const dynamic = "force-dynamic";
 
 const VALID_RANGES = new Set(["1D", "5D", "1M", "3M", "6M", "1Y", "5Y", "Max"]);
 
