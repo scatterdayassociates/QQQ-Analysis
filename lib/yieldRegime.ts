@@ -183,21 +183,36 @@ interface AlphaVantageTreasuryYieldResponse {
   Note?: string;
 }
 
+interface AlphaVantageFetchResult {
+  obs: FredObservation[];
+  // Non-null whenever obs came back empty for a reason worth surfacing
+  // (missing key, HTTP failure, rate limit, thrown error) — distinct from
+  // "the request succeeded but genuinely had nothing newer than FRED,"
+  // which is not an error and isn't reported here. Previously this was only
+  // ever console.error'd and silently swallowed, which made "the fallback
+  // ran but didn't help" indistinguishable from "the fallback never ran" or
+  // "AV is rate-limited" from the UI — all three need different responses
+  // from a human debugging staleness, so refreshRegimeData now threads this
+  // through to RefreshDiagnostics instead of just logging it.
+  error: string | null;
+}
+
 /**
  * Backup Treasury yield source, used only when FRED's own latest
  * observation is stale (see the 24h check in refreshRegimeData below).
  * Same ALPHA_VANTAGE_API_KEY already used elsewhere in this app — no new
- * credential. Degrades to an empty array (never throws) on any failure,
- * since this is already the fallback path: if it doesn't work either, the
- * caller should just keep whatever FRED last gave it rather than erroring
- * out the whole refresh.
+ * credential. Never throws on failure, since this is already the fallback
+ * path: if it doesn't work either, the caller should just keep whatever
+ * FRED last gave it rather than erroring out the whole refresh — but the
+ * failure reason is still returned (not just logged) so it can reach the UI.
  */
-async function fetchAlphaVantageTreasuryYield(maturity: "10year" | "2year"): Promise<FredObservation[]> {
+async function fetchAlphaVantageTreasuryYield(maturity: "10year" | "2year"): Promise<AlphaVantageFetchResult> {
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
   if (!apiKey) {
-    console.error("[yield-regime] ALPHA_VANTAGE_API_KEY is not set — cannot use the Alpha Vantage Treasury yield fallback.");
-    return [];
+    const error = "ALPHA_VANTAGE_API_KEY is not set";
+    console.error(`[yield-regime] ${error} — cannot use the Alpha Vantage Treasury yield fallback.`);
+    return { obs: [], error };
   }
 
   try {
@@ -211,22 +226,24 @@ async function fetchAlphaVantageTreasuryYield(maturity: "10year" | "2year"): Pro
     // silently defeat the whole point of the 24h-staleness fallback.
     const res = await fetch(url.toString(), { cache: "no-store" });
     if (!res.ok) {
-      console.error(`[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) request failed: ${res.status}`);
-      return [];
+      const error = `Alpha Vantage TREASURY_YIELD (${maturity}) request failed: HTTP ${res.status}`;
+      console.error(`[yield-regime] ${error}`);
+      return { obs: [], error };
     }
     const data = (await res.json()) as AlphaVantageTreasuryYieldResponse;
     if (data.Information || data.Note) {
-      console.error(
-        `[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) rate-limited/errored: ${(data.Information || data.Note || "").slice(0, 200)}`
-      );
-      return [];
+      const error = `Alpha Vantage TREASURY_YIELD (${maturity}) rate-limited/errored: ${(data.Information || data.Note || "").slice(0, 200)}`;
+      console.error(`[yield-regime] ${error}`);
+      return { obs: [], error };
     }
-    return (data.data ?? [])
+    const obs = (data.data ?? [])
       .map((o) => ({ date: o.date, value: Number.parseFloat(o.value) }))
       .filter((o) => Number.isFinite(o.value));
+    return { obs, error: null };
   } catch (err) {
-    console.error(`[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) lookup threw: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
+    const error = `Alpha Vantage TREASURY_YIELD (${maturity}) lookup threw: ${err instanceof Error ? err.message : String(err)}`;
+    console.error(`[yield-regime] ${error}`);
+    return { obs: [], error };
   }
 }
 
@@ -426,6 +443,13 @@ let lastRefreshError: string | null = null;
 let lastFredObservedDate: string | null = null;
 let usedAlphaVantageFallback = false;
 let alphaVantageFallbackDates: string[] = [];
+// Distinguishes "fallback never ran (FRED wasn't stale enough yet, or the
+// 6h cooldown was still active)" from "fallback ran but had nothing to add"
+// from "fallback ran and errored" — usedAlphaVantageFallback alone can't
+// tell those apart, which made a silently-empty result indistinguishable
+// from a broken ALPHA_VANTAGE_API_KEY from the UI.
+let alphaVantageFallbackAttempted = false;
+let alphaVantageFallbackError: string | null = null;
 // Cross-check only — never written to yield_regime_daily (whose y10/y2
 // columns are NOT NULL, so a spread-only observation can't be stored as a
 // real row anyway). FRED computes T10Y2Y = DGS10 - DGS2 itself, but its own
@@ -504,26 +528,38 @@ export async function refreshRegimeData(): Promise<{ daysWritten: number; episod
 
       usedAlphaVantageFallback = false;
       alphaVantageFallbackDates = [];
+      alphaVantageFallbackAttempted = false;
+      alphaVantageFallbackError = null;
       const staleMs = lastFredObservedDate
         ? Date.now() - new Date(`${lastFredObservedDate}T00:00:00Z`).getTime()
         : Infinity;
 
-      if (staleMs > STALE_THRESHOLD_MS && Date.now() - lastAlphaVantageFallbackAttemptAt > ALPHA_VANTAGE_FALLBACK_COOLDOWN_MS) {
-        lastAlphaVantageFallbackAttemptAt = Date.now();
-        console.error(
-          `[yield-regime] FRED's latest observation (${lastFredObservedDate ?? "none"}) is >24h old — trying the Alpha Vantage TREASURY_YIELD fallback.`
-        );
-        const [av10, av2] = await Promise.all([fetchAlphaVantageTreasuryYield("10year"), fetchAlphaVantageTreasuryYield("2year")]);
-        const avAligned = alignObservations(av10, av2).filter((o) => o.date >= REGIME_BACKFILL_START);
-        const newerFromAv = avAligned.filter((o) => !lastFredObservedDate || o.date > lastFredObservedDate);
+      if (staleMs > STALE_THRESHOLD_MS) {
+        if (Date.now() - lastAlphaVantageFallbackAttemptAt > ALPHA_VANTAGE_FALLBACK_COOLDOWN_MS) {
+          alphaVantageFallbackAttempted = true;
+          lastAlphaVantageFallbackAttemptAt = Date.now();
+          console.error(
+            `[yield-regime] FRED's latest observation (${lastFredObservedDate ?? "none"}) is >24h old — trying the Alpha Vantage TREASURY_YIELD fallback.`
+          );
+          const [av10, av2] = await Promise.all([fetchAlphaVantageTreasuryYield("10year"), fetchAlphaVantageTreasuryYield("2year")]);
+          const avErrors = [av10.error, av2.error].filter((e): e is string => e !== null);
+          if (avErrors.length > 0) alphaVantageFallbackError = avErrors.join("; ");
 
-        if (newerFromAv.length > 0) {
-          aligned = [...aligned, ...newerFromAv].sort((a, b) => (a.date < b.date ? -1 : 1));
-          usedAlphaVantageFallback = true;
-          alphaVantageFallbackDates = newerFromAv.map((o) => o.date);
-          console.error(`[yield-regime] Alpha Vantage fallback supplied ${newerFromAv.length} newer observation(s): ${alphaVantageFallbackDates.join(", ")}.`);
+          const avAligned = alignObservations(av10.obs, av2.obs).filter((o) => o.date >= REGIME_BACKFILL_START);
+          const newerFromAv = avAligned.filter((o) => !lastFredObservedDate || o.date > lastFredObservedDate);
+
+          if (newerFromAv.length > 0) {
+            aligned = [...aligned, ...newerFromAv].sort((a, b) => (a.date < b.date ? -1 : 1));
+            usedAlphaVantageFallback = true;
+            alphaVantageFallbackDates = newerFromAv.map((o) => o.date);
+            console.error(`[yield-regime] Alpha Vantage fallback supplied ${newerFromAv.length} newer observation(s): ${alphaVantageFallbackDates.join(", ")}.`);
+          } else if (!alphaVantageFallbackError) {
+            console.error("[yield-regime] Alpha Vantage fallback found nothing newer than FRED either — AV's own Treasury yield data hasn't caught up yet.");
+          }
         } else {
-          console.error("[yield-regime] Alpha Vantage fallback found nothing newer than FRED either.");
+          console.error(
+            `[yield-regime] FRED is >24h stale but the Alpha Vantage fallback cooldown is still active (last attempt ${new Date(lastAlphaVantageFallbackAttemptAt).toISOString()}) — skipping this refresh.`
+          );
         }
       }
 
@@ -592,6 +628,8 @@ export interface RefreshDiagnostics {
   lastFredObservedDate: string | null; // newest date FRED itself returned on the last attempt, regardless of whether it was new
   usedAlphaVantageFallback: boolean; // true if the last attempt supplemented FRED with Alpha Vantage TREASURY_YIELD data
   alphaVantageFallbackDates: string[]; // which date(s), if any
+  alphaVantageFallbackAttempted: boolean; // true if FRED was stale enough (>24h) and the cooldown allowed an actual AV request this refresh
+  alphaVantageFallbackError: string | null; // why AV didn't help, if it was attempted but failed (missing key, HTTP error, rate limit) — distinct from "attempted but AV had nothing newer either," which isn't an error
   lastT10Y2YObservedDate: string | null; // FRED's own combined T10Y2Y series latest date, for comparison — see the comment above lastT10Y2YObservedDate's declaration
   lastT10Y2YObservedValue: number | null;
   t10Y2YAheadOfComponents: boolean; // true when T10Y2Y's own latest date is newer than DGS10/DGS2's — a FRED-side publish-lag quirk, not a bug in this app
@@ -604,6 +642,8 @@ export function getLastRefreshDiagnostics(): RefreshDiagnostics {
     lastFredObservedDate,
     usedAlphaVantageFallback,
     alphaVantageFallbackDates,
+    alphaVantageFallbackAttempted,
+    alphaVantageFallbackError,
     lastT10Y2YObservedDate,
     lastT10Y2YObservedValue,
     t10Y2YAheadOfComponents: Boolean(lastT10Y2YObservedDate && lastFredObservedDate && lastT10Y2YObservedDate > lastFredObservedDate),

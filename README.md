@@ -237,7 +237,13 @@ episodes as historical "episodes," and overlays both against QQQ/TQQQ price acti
   from scratch). Throttled to at most once every 6 hours even under the hourly cron, so an
   extended FRED outage can't burn through Alpha Vantage's free-tier quota and starve the other
   Alpha-Vantage-dependent tabs (Catalyst Tracker, AI Earnings Analysis). The Current State card's
-  "Last refresh check" line shows exactly when this fallback was used, if ever.
+  "Last refresh check" line distinguishes three outcomes so a silent no-op doesn't look identical
+  to a broken key: the fallback supplied newer data and was used; the fallback ran but Alpha
+  Vantage's own Treasury yield data had nothing newer than FRED either (a genuine data-availability
+  gap on AV's side, not a config problem); or the fallback ran and failed (missing
+  `ALPHA_VANTAGE_API_KEY`, an HTTP error, or AV's own rate limit — reported inline rather than only
+  logged server-side). If FRED isn't yet 24h stale, or the 6h cooldown is still active, none of
+  these fire and the line is simply omitted.
 - **T10Y2Y cross-check.** Every refresh also fetches FRED's own pre-computed `T10Y2Y` series
   (non-fatal if it fails) purely to compare its latest date against `DGS10`/`DGS2`'s. FRED has
   been directly observed publishing `T10Y2Y` a day *ahead* of the individual `DGS10`/`DGS2` series

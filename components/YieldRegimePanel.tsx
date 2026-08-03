@@ -325,7 +325,11 @@ export default function YieldRegimePanel() {
                 observation seen: {data.refresh.lastFredObservedDate ?? "—"}
                 {data.refresh.usedAlphaVantageFallback
                   ? ` · FRED was >24h stale, used Alpha Vantage TREASURY_YIELD for: ${data.refresh.alphaVantageFallbackDates.join(", ")}`
-                  : ""}
+                  : data.refresh.alphaVantageFallbackAttempted
+                    ? data.refresh.alphaVantageFallbackError
+                      ? ` · FRED was >24h stale, Alpha Vantage fallback failed: ${data.refresh.alphaVantageFallbackError}`
+                      : " · FRED was >24h stale, tried Alpha Vantage TREASURY_YIELD but it had nothing newer either"
+                    : ""}
                 {data.refresh.t10Y2YAheadOfComponents
                   ? ` · note: FRED's own T10Y2Y series already shows ${data.refresh.lastT10Y2YObservedDate} (${data.refresh.lastT10Y2YObservedValue}), ahead of the DGS10/DGS2 component series above — this is a publish-order lag on FRED's own side, not stale data from this app`
                   : ""}
