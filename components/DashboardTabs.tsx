@@ -8,7 +8,7 @@ import AIEarningsPanel from "./AIEarningsPanel";
 import YieldRegimePanel from "./YieldRegimePanel";
 
 const TABS = [
-  { key: "daypart", label: "Intraday Daypart" },
+  { key: "daypart", label: "Daypart Volume Analysis" },
   { key: "fundamentals", label: "Fundamental Analysis" },
   { key: "catalysts", label: "Catalyst Tracker" },
   { key: "ai-earnings", label: "AI Earnings Analysis" },

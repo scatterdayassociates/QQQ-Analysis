@@ -1,5 +1,5 @@
 // Server-side data + logic for the "Overnight Gap" view (close-to-open
-// delta), inside the Intraday Daypart module. Reuses the same daily-bar
+// delta), inside the Daypart Volume Analysis module. Reuses the same daily-bar
 // convention already validated for Catalyst Tracker's reaction calc, plus
 // the same macro calendar and top-10 ticker list — see lib/catalysts.ts.
 //

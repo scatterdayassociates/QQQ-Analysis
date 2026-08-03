@@ -2,7 +2,7 @@
 
 A lightweight Next.js dashboard with five tabs:
 
-1. **Intraday Daypart** — QQQ/TQQQ intraday volume in 15-minute buckets across the regular
+1. **Daypart Volume Analysis** — QQQ/TQQQ intraday volume in 15-minute buckets across the regular
    session (9:30 AM–4:00 PM ET), with a realized-volatility proxy plotted alongside, plus an
    Overnight Gap sub-view (close-to-open moves, ranked and tagged against catalysts).
 2. **Fundamental Analysis** — a 7-metric market strength/tactical model (macro, trend, credit,
@@ -22,7 +22,7 @@ free public [FRED](https://fred.stlouisfed.org) series for a couple of macro inp
 The TBill Yield Spread Analysis tab additionally requires a MySQL database — see its own section below; every
 other tab computes its data on demand and needs no database.
 
-## Tab 1: Intraday Daypart
+## Tab 1: Daypart Volume Analysis
 
 - **Volume** comes from the **Custom Bars** endpoint (`/v2/aggs/ticker/{ticker}/range/...`),
   requested as 15-minute intraday bars for the selected date, for both QQQ and TQQQ.
@@ -40,7 +40,7 @@ other tab computes its data on demand and needs no database.
 - A sub-nav inside this tab switches to the **Overnight Gap** view (see below) — same tab,
   additive, doesn't touch the volume/volatility view above.
 
-### Overnight Gap (inside Intraday Daypart)
+### Overnight Gap (inside Daypart Volume Analysis)
 
 - **Definition**: for trading day D, overnight gap % = `(Open[D] − Close[D-1]) / Close[D-1]`,
   where `Close[D-1]` is the prior trading day's 4:00 PM ET regular-session close and `Open[D]`
@@ -285,7 +285,7 @@ episodes as historical "episodes," and overlays both against QQQ/TQQQ price acti
   column, to keep that table focused on the regime signal itself rather than TQQQ's own decay
   characteristics. NDX-100 index-level data isn't used as the equity proxy since Massive's Indices
   product tier isn't included on this account's current plan (confirmed unavailable, same
-  constraint noted on the Intraday Daypart tab's VIX proxy) — QQQ tracks NDX-100 closely enough,
+  constraint noted on the Daypart Volume Analysis tab's VIX proxy) — QQQ tracks NDX-100 closely enough,
   with a small, well-known expense-ratio drag over long lookbacks.
 - **API routes**: `GET /api/yield-regime?range=1Y` (bundled current state + daily series + episode
   table, self-healing), `GET /api/yield-regime/overlay?symbol=QQQ&range=1Y` (price overlay, lazily
@@ -316,7 +316,7 @@ lib/overnightGap.ts          close-to-open gap calc + catalyst tagging, reuses c
 lib/aiEarnings.ts            capex fragility screen: fundamentals fetch + cross-sectional scoring (server-only)
 lib/db.ts                    MySQL pool + schema setup (server-only) — used only by the TBill Yield Spread Analysis tab
 lib/yieldRegime.ts           FRED fetch + regime classification + episode roll-up + MySQL read/write (server-only)
-components/DashboardTabs.tsx      tab switcher (Intraday Daypart / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis / TBill Yield Spread Analysis)
+components/DashboardTabs.tsx      tab switcher (Daypart Volume Analysis / Fundamental Analysis / Catalyst Tracker / AI Earnings Analysis / TBill Yield Spread Analysis)
 components/DaypartPanel.tsx       manages the list of date-range entries (up to 5), the add/remove UI, and the sub-nav to Overnight Gap
 components/DaypartEntry.tsx       one date range's toolbar + readout strip, ties its chart and table together
 components/DaypartChart.tsx       dependency-free SVG chart (volume bars + volatility line, dual axis)
@@ -359,7 +359,7 @@ at https://www.alphavantage.co/support/#api-key, copy your API key, and add:
 ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
 ```
 
-Optional: for historical Earnings tags on the Overnight Gap view (under Intraday Daypart), sign
+Optional: for historical Earnings tags on the Overnight Gap view (under Daypart Volume Analysis), sign
 up free at https://finnhub.io/register, copy your API key from the dashboard, and add:
 
 ```
@@ -472,7 +472,7 @@ Then run the dev server:
 npm run dev
 ```
 
-Open http://localhost:3000. The **Intraday Daypart** tab is active by default: a toolbar
+Open http://localhost:3000. The **Daypart Volume Analysis** tab is active by default: a toolbar
 (date + from/to time pickers), a volume/volatility chart, and a matching data table — hovering
 either the chart or a table row highlights the same bucket in both. Switch to **Fundamental
 Analysis** for the tactical decision card, aggregate strength gauge, and the 7 metric cards.

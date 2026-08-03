@@ -254,7 +254,7 @@ export default function CatalystPanel() {
         <code>ALPHA_VANTAGE_API_KEY</code> unlock both; without one, Earnings rows are simply absent
         rather than the page failing. Neither Alpha Vantage endpoint distinguishes before-open vs.
         after-close timing, so earnings reactions here are close-to-close over the report day
-        itself, same as the macro rows. (The Overnight Gap view under Intraday Daypart does
+        itself, same as the macro rows. (The Overnight Gap view under Daypart Volume Analysis does
         distinguish that timing for its own earnings tags, via a different source — see its own
         methodology note.)
       </p>

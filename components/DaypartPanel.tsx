@@ -26,7 +26,7 @@ export default function DaypartPanel() {
     <section>
       <div className="page-header">
         <div>
-          <h1>Intraday Daypart</h1>
+          <h1>Daypart Volume Analysis</h1>
           <p className="subtitle">
             {subView === "volume"
               ? `15-minute buckets across the regular session (9:30 AM–4:00 PM ET), with a realized-volatility proxy plotted alongside QQQ/TQQQ volume. Compare up to ${MAX_ENTRIES} dates at once.`
