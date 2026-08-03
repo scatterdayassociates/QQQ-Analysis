@@ -63,7 +63,7 @@ body {
 /* ---------- header ---------- */
 
 .eyebrow {
-  font-size: 0.7rem;
+  font-size: 0.85rem; /* base 0.7rem + ~2pt */
   text-transform: uppercase;
   letter-spacing: 0.11em;
   color: var(--muted-2);
