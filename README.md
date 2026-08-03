@@ -222,12 +222,22 @@ episodes as historical "episodes," and overlays both against QQQ/TQQQ price acti
   from the live config values so they can't drift from what the server actually applies. The
   Current State card also shows the actual Δ Spread/Δ10Y/Δ2Y driving today's Regime classification
   alongside the levels, so neither label needs to be taken on faith.
-- **Data source**: FRED's public `DGS10`/`DGS2` series (no API key, no rate limit) — the same
-  free, key-free convention this app already uses for VIX/USD-index proxies on the Fundamental
-  Analysis tab, extended here to also capture each observation's date. A day only counts toward
-  the regime calculation if both series have a real observation that day; weekends and the bond
-  market's own holiday calendar (which differs slightly from the equity calendar) are excluded
-  rather than forward-filled.
+- **Data source**: FRED's public `DGS10`/`DGS2` series (no API key, no rate limit) as the primary
+  source — the same free, key-free convention this app already uses for VIX/USD-index proxies on
+  the Fundamental Analysis tab, extended here to also capture each observation's date. A day only
+  counts toward the regime calculation if both series have a real observation that day; weekends
+  and the bond market's own holiday calendar (which differs slightly from the equity calendar) are
+  excluded rather than forward-filled.
+- **Backup data source**: if FRED's own latest observation is more than 24 hours old (a genuine
+  outage/delay — not the routine weekend/holiday gap, which just resolves once FRED posts), each
+  refresh also tries Alpha Vantage's `TREASURY_YIELD` endpoint (same `ALPHA_VANTAGE_API_KEY`
+  already used elsewhere in this app) for whatever dates FRED hasn't covered yet. FRED stays
+  authoritative for every date it does have; Alpha Vantage only ever supplements strictly newer
+  dates and gets automatically superseded once FRED itself catches up (every refresh recomputes
+  from scratch). Throttled to at most once every 6 hours even under the hourly cron, so an
+  extended FRED outage can't burn through Alpha Vantage's free-tier quota and starve the other
+  Alpha-Vantage-dependent tabs (Catalyst Tracker, AI Earnings Analysis). The Current State card's
+  "Last refresh check" line shows exactly when this fallback was used, if ever.
 - **Persistence — the one tab in this app with a database.** Every other tab computes its data
   fresh on each request; this one is backed by MySQL because its episode table is derived by
   walking the *entire* yield history, which is too expensive to redo on every page load. See
@@ -632,4 +642,7 @@ stale-data read) costs nothing there. The refresh also fetches QQQ's full daily 
 (same Stocks Starter entitlement as everywhere else) to compute each episode's % change — cheap,
 but the *first* backfill after setting `DATABASE_URL` fetches QQQ's entire history since
 `REGIME_BACKFILL_START`, which is the slowest part of that one-time run. Every subsequent refresh
-only recomputes when there's a genuinely new trading day.
+only recomputes when there's a genuinely new trading day. The Alpha Vantage `TREASURY_YIELD`
+backup only fires when FRED is genuinely stale (>24h), and even then is throttled to at most once
+every 6 hours (2 requests when it does fire) regardless of how often the hourly cron ticks during
+that outage — protecting the daily quota shared with Catalyst Tracker and AI Earnings Analysis.

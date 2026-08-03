@@ -16,20 +16,32 @@
 // vercel.json's cron is a pre-warming nicety on top, not a requirement.
 //
 // Data sources:
-//   - Treasury yields: FRED's public DGS10/DGS2 series (no API key, same
-//     `fredgraph.csv` convention already used by lib/fundamentals.ts for
-//     VIXCLS/DTWEXBGS, extended here to also capture the date column since
-//     the regime engine needs dated observations, not just a value array).
+//   - Treasury yields (primary): FRED's public DGS10/DGS2 series (no API
+//     key, same `fredgraph.csv` convention already used by
+//     lib/fundamentals.ts for VIXCLS/DTWEXBGS, extended here to also capture
+//     the date column since the regime engine needs dated observations, not
+//     just a value array).
+//   - Treasury yields (backup): Alpha Vantage's TREASURY_YIELD endpoint
+//     (same ALPHA_VANTAGE_API_KEY already used elsewhere in this app) —
+//     only consulted when FRED's own latest observation is more than 24h
+//     old, to fill in whatever gap FRED hasn't closed yet. FRED stays
+//     authoritative for every date it does cover; Alpha Vantage only ever
+//     supplements dates newer than FRED's own latest, and gets naturally
+//     superseded once FRED catches up (every refresh recomputes from
+//     scratch, so a later FRED-covered value for the same date simply
+//     overwrites the earlier Alpha-Vantage-sourced one). See
+//     refreshRegimeData's fallback block below.
 //   - QQQ/TQQQ price overlay: Massive's Custom Bars, via the existing
 //     lib/massive.ts (same MASSIVE_API_KEY, no new credential).
-// Both degrade gracefully: a stale/unreachable FRED fetch leaves existing
-// DB data in place (the read path still returns whatever was last stored,
-// with its own "data as of" date), and a failed QQQ fetch just leaves
-// qqqPctChange null for the affected episodes rather than failing the tab.
+// All three degrade gracefully: a stale/unreachable FRED fetch (with no
+// usable Alpha Vantage backup either) leaves existing DB data in place (the
+// read path still returns whatever was last stored, with its own "data as
+// of" date), and a failed QQQ fetch just leaves qqqPctChange null for the
+// affected episodes rather than failing the tab.
 //
 // This file must only ever be imported from server code: it reads the
-// secret DATABASE_URL (via lib/db.ts) and equity data through lib/massive.ts
-// (secret MASSIVE_API_KEY).
+// secret DATABASE_URL (via lib/db.ts), the secret ALPHA_VANTAGE_API_KEY
+// directly, and equity data through lib/massive.ts (secret MASSIVE_API_KEY).
 
 import { getCustomBars } from "./massive";
 import { ensureRegimeTables, query, withTransaction } from "./db";
@@ -150,6 +162,58 @@ async function fetchFredSeriesWithDates(seriesId: string): Promise<FredObservati
     throw new Error(`FRED series ${seriesId} returned no usable data.`);
   }
   return obs;
+}
+
+const ALPHA_VANTAGE_BASE = "https://www.alphavantage.co/query";
+
+interface AlphaVantageTreasuryYieldResponse {
+  data?: { date: string; value: string }[];
+  Information?: string;
+  Note?: string;
+}
+
+/**
+ * Backup Treasury yield source, used only when FRED's own latest
+ * observation is stale (see the 24h check in refreshRegimeData below).
+ * Same ALPHA_VANTAGE_API_KEY already used elsewhere in this app — no new
+ * credential. Degrades to an empty array (never throws) on any failure,
+ * since this is already the fallback path: if it doesn't work either, the
+ * caller should just keep whatever FRED last gave it rather than erroring
+ * out the whole refresh.
+ */
+async function fetchAlphaVantageTreasuryYield(maturity: "10year" | "2year"): Promise<FredObservation[]> {
+  const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    console.error("[yield-regime] ALPHA_VANTAGE_API_KEY is not set — cannot use the Alpha Vantage Treasury yield fallback.");
+    return [];
+  }
+
+  try {
+    const url = new URL(ALPHA_VANTAGE_BASE);
+    url.searchParams.set("function", "TREASURY_YIELD");
+    url.searchParams.set("interval", "daily");
+    url.searchParams.set("maturity", maturity);
+    url.searchParams.set("apikey", apiKey);
+    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+    if (!res.ok) {
+      console.error(`[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) request failed: ${res.status}`);
+      return [];
+    }
+    const data = (await res.json()) as AlphaVantageTreasuryYieldResponse;
+    if (data.Information || data.Note) {
+      console.error(
+        `[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) rate-limited/errored: ${(data.Information || data.Note || "").slice(0, 200)}`
+      );
+      return [];
+    }
+    return (data.data ?? [])
+      .map((o) => ({ date: o.date, value: Number.parseFloat(o.value) }))
+      .filter((o) => Number.isFinite(o.value));
+  } catch (err) {
+    console.error(`[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) lookup threw: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
 }
 
 interface AlignedObservation {
@@ -346,6 +410,21 @@ let refreshInFlight: Promise<{ daysWritten: number; episodesWritten: number }> |
 let lastRefreshAttemptAt: string | null = null;
 let lastRefreshError: string | null = null;
 let lastFredObservedDate: string | null = null;
+let usedAlphaVantageFallback = false;
+let alphaVantageFallbackDates: string[] = [];
+
+const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // the 24h trigger from the spec
+// Throttles how often the Alpha Vantage fallback is actually *attempted*
+// (not just how often refreshRegimeData runs) — without this, an extended
+// FRED outage combined with the hourly cron would burn 2 Alpha Vantage
+// requests every single hour, which would exhaust the free tier's daily
+// quota in well under a day and start starving every *other* Alpha
+// Vantage-dependent feature in this app (Catalyst Tracker's EV/EBITDA and
+// earnings data, AI Earnings' fundamentals). Best-effort only: resets on
+// cold start, so it's not a hard guarantee under serverless, just a
+// reasonable guard against the common case.
+const ALPHA_VANTAGE_FALLBACK_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+let lastAlphaVantageFallbackAttemptAt = 0;
 
 /**
  * The "daily job" from the spec, reframed as an idempotent function rather
@@ -360,6 +439,13 @@ let lastFredObservedDate: string | null = null;
  * FRED fetch itself is cheap and cached for an hour, so hourly polling via
  * vercel.json's cron costs little even when there's nothing new to write),
  * and indirectly by ensureFreshRegimeData below for the self-healing case.
+ *
+ * If FRED's own latest observation is more than 24h old, this also tries
+ * Alpha Vantage's TREASURY_YIELD as a backup source for whatever dates FRED
+ * hasn't covered yet (see fetchAlphaVantageTreasuryYield) — FRED remains
+ * authoritative for every date it does have; Alpha Vantage only ever fills
+ * in strictly newer dates, and gets naturally superseded the next time FRED
+ * itself covers that date (this function always recomputes from scratch).
  */
 export async function refreshRegimeData(): Promise<{ daysWritten: number; episodesWritten: number }> {
   if (refreshInFlight) return refreshInFlight;
@@ -370,8 +456,34 @@ export async function refreshRegimeData(): Promise<{ daysWritten: number; episod
       await ensureRegimeTables();
 
       const [y10Obs, y2Obs] = await Promise.all([fetchFredSeriesWithDates("DGS10"), fetchFredSeriesWithDates("DGS2")]);
-      const aligned = alignObservations(y10Obs, y2Obs).filter((o) => o.date >= REGIME_BACKFILL_START);
+      let aligned = alignObservations(y10Obs, y2Obs).filter((o) => o.date >= REGIME_BACKFILL_START);
       lastFredObservedDate = aligned.length > 0 ? aligned[aligned.length - 1].date : null;
+
+      usedAlphaVantageFallback = false;
+      alphaVantageFallbackDates = [];
+      const staleMs = lastFredObservedDate
+        ? Date.now() - new Date(`${lastFredObservedDate}T00:00:00Z`).getTime()
+        : Infinity;
+
+      if (staleMs > STALE_THRESHOLD_MS && Date.now() - lastAlphaVantageFallbackAttemptAt > ALPHA_VANTAGE_FALLBACK_COOLDOWN_MS) {
+        lastAlphaVantageFallbackAttemptAt = Date.now();
+        console.error(
+          `[yield-regime] FRED's latest observation (${lastFredObservedDate ?? "none"}) is >24h old — trying the Alpha Vantage TREASURY_YIELD fallback.`
+        );
+        const [av10, av2] = await Promise.all([fetchAlphaVantageTreasuryYield("10year"), fetchAlphaVantageTreasuryYield("2year")]);
+        const avAligned = alignObservations(av10, av2).filter((o) => o.date >= REGIME_BACKFILL_START);
+        const newerFromAv = avAligned.filter((o) => !lastFredObservedDate || o.date > lastFredObservedDate);
+
+        if (newerFromAv.length > 0) {
+          aligned = [...aligned, ...newerFromAv].sort((a, b) => (a.date < b.date ? -1 : 1));
+          usedAlphaVantageFallback = true;
+          alphaVantageFallbackDates = newerFromAv.map((o) => o.date);
+          console.error(`[yield-regime] Alpha Vantage fallback supplied ${newerFromAv.length} newer observation(s): ${alphaVantageFallbackDates.join(", ")}.`);
+        } else {
+          console.error("[yield-regime] Alpha Vantage fallback found nothing newer than FRED either.");
+        }
+      }
+
       const dailyRows = computeDailyRegimes(aligned, REGIME_LOOKBACK_DAYS, REGIME_THRESHOLD_BPS);
 
       await upsertDailyRows(dailyRows);
@@ -435,10 +547,12 @@ export interface RefreshDiagnostics {
   lastRefreshAttemptAt: string | null;
   lastRefreshError: string | null;
   lastFredObservedDate: string | null; // newest date FRED itself returned on the last attempt, regardless of whether it was new
+  usedAlphaVantageFallback: boolean; // true if the last attempt supplemented FRED with Alpha Vantage TREASURY_YIELD data
+  alphaVantageFallbackDates: string[]; // which date(s), if any
 }
 
 export function getLastRefreshDiagnostics(): RefreshDiagnostics {
-  return { lastRefreshAttemptAt, lastRefreshError, lastFredObservedDate };
+  return { lastRefreshAttemptAt, lastRefreshError, lastFredObservedDate, usedAlphaVantageFallback, alphaVantageFallbackDates };
 }
 
 export interface RegimeCurrentState {

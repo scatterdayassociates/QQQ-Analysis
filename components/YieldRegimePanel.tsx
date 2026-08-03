@@ -323,6 +323,9 @@ export default function YieldRegimePanel() {
               <p className={`data-as-of${data.refresh.lastRefreshError ? " data-as-of-warning" : ""}`}>
                 Last refresh check: {new Date(data.refresh.lastRefreshAttemptAt).toLocaleString()} · newest FRED
                 observation seen: {data.refresh.lastFredObservedDate ?? "—"}
+                {data.refresh.usedAlphaVantageFallback
+                  ? ` · FRED was >24h stale, used Alpha Vantage TREASURY_YIELD for: ${data.refresh.alphaVantageFallbackDates.join(", ")}`
+                  : ""}
                 {data.refresh.lastRefreshError ? ` · failed: ${data.refresh.lastRefreshError}` : ""}
               </p>
             )}
@@ -642,13 +645,24 @@ export default function YieldRegimePanel() {
         </p>
         <p>
           <strong>Data source.</strong> 10Y/2Y yields come from FRED&apos;s public <code>DGS10</code>/
-          <code>DGS2</code> series (no API key, no rate limit) rather than Alpha Vantage&apos;s{" "}
-          <code>TREASURY_YIELD</code> endpoint — same free, key-free convention already used elsewhere in
-          this app for VIX/USD-index proxies (see Fundamental Analysis). A day only counts if both series have
-          a real observation that day (weekends, and the bond market&apos;s own holiday calendar, which
-          differs slightly from the equity calendar, are excluded automatically rather than forward-filled
-          into the regime calculation) — the chart still reads as continuous because a line naturally
-          connects across those gaps.
+          <code>DGS2</code> series (no API key, no rate limit) as the primary source — same free, key-free
+          convention already used elsewhere in this app for VIX/USD-index proxies (see Fundamental Analysis).
+          A day only counts if both series have a real observation that day (weekends, and the bond
+          market&apos;s own holiday calendar, which differs slightly from the equity calendar, are excluded
+          automatically rather than forward-filled into the regime calculation) — the chart still reads as
+          continuous because a line naturally connects across those gaps.
+        </p>
+        <p>
+          <strong>Backup source.</strong> If FRED&apos;s own latest observation is more than 24 hours old
+          (a genuine FRED outage/delay, not the routine weekend/holiday gap — that resolves on its own once
+          FRED posts), each refresh also tries Alpha Vantage&apos;s <code>TREASURY_YIELD</code> endpoint
+          (same <code>ALPHA_VANTAGE_API_KEY</code> already used elsewhere in this app) for whatever dates FRED
+          hasn&apos;t covered yet. FRED stays authoritative for every date it does have — Alpha Vantage only
+          ever supplements strictly newer dates, and gets automatically superseded the next time FRED itself
+          catches up (every refresh recomputes from scratch). Throttled to at most once every 6 hours even
+          under the hourly cron, so an extended FRED outage can&apos;t burn through Alpha Vantage&apos;s free-tier
+          quota and starve the other tabs that also depend on it (Catalyst Tracker, AI Earnings Analysis). The
+          &ldquo;Last refresh check&rdquo; line above shows exactly when this fallback was used, if ever.
         </p>
         <p>
           <strong>Persistence.</strong> Unlike every other tab in this app, this one is backed by MySQL
