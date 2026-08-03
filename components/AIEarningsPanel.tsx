@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { AI_EARNINGS_UNIVERSE } from "@/lib/aiEarnings";
 import type { AiEarningsData, AiEarningsScore, OptionsRichness } from "@/lib/aiEarnings";
 
 const TIER_LABELS: Record<1 | 2 | 3 | 4, string> = {
@@ -8,6 +9,36 @@ const TIER_LABELS: Record<1 | 2 | 3 | 4, string> = {
   2: "Leveraged Buyer",
   3: "Credit-Risk Tail",
   4: "Memory Makers",
+};
+
+// Column-header tooltips (native title attribute) for the Buyer Fragility
+// Score table — mirrors the footnote below, just surfaced inline per column
+// so the definition is available without scrolling down.
+const COLUMN_TOOLTIPS: Record<string, string> = {
+  ticker: "Exchange ticker symbol.",
+  tier:
+    "Buyer-funding-posture cohort: Tier 1 Hyperscaler (funding capex mostly from operations, so far), " +
+    "Tier 2 Leveraged Buyer (increasingly using debt/equity issuance), Tier 3 Credit-Risk Tail " +
+    "(highest-beta/credit-risk name most exposed if the cycle cracks), Tier 4 Memory Makers " +
+    "(AI-capex memory/storage suppliers, not buyers — a related but distinct cohort).",
+  evToEbitda:
+    "EV/EBITDA = Enterprise Value ÷ EBITDA (earnings before interest, taxes, depreciation & amortization). " +
+    "Capital-structure-neutral valuation multiple — accounts for debt/cash on the balance sheet, unlike P/E — " +
+    "comparable across this universe's very different leverage profiles. “—” if EBITDA is negative or unavailable.",
+  latestQuarter: "Fiscal quarter end date (MM/DD/YYYY) the row's metrics are computed from.",
+  coverage: "Coverage = operating cash flow ÷ capex, latest quarter. Below 1.0x means capex wasn't covered by operations that quarter.",
+  capexToRevenue: "Capex/Rev = capex ÷ revenue, trailing 4-quarter average (smooths out lumpy one-off capex timing).",
+  financing:
+    "Financing = (debt issued + equity issued) ÷ capex, trailing 4-quarter average — how much of capex is funded " +
+    "externally rather than from operations. Trailing-average rather than latest-quarter-only so a single one-off raise " +
+    "doesn't outrank a name that's been persistently externally-funding capex for years.",
+  trend: "Trend = latest capex coverage ratio minus the same quarter one year ago. Negative means deteriorating coverage.",
+  buybackDelta: "Buyback Δ YoY = buybacks this quarter minus buybacks a year ago. A sharp cut is often the first lever pulled before touching the capex plan.",
+  interestExpense: "Interest Exp YoY = year-over-year % growth in interest expense — rising debt service cost, a lagging fragility signal.",
+  fragilityScore:
+    "Fragility Score = cross-sectional z-scored composite of capex coverage (inverted), Capex/Rev, Financing, and Trend, " +
+    "weighted 30/20/30/20. Computed across the entire universe (all tiers together), recalibrates automatically as tickers " +
+    "are added. Higher = more fragile.",
 };
 
 function richnessClass(v: number | null): string {
@@ -19,8 +50,17 @@ function fmtRatio(v: number | null): string {
   return v === null ? "—" : v.toFixed(2);
 }
 
-function fmtPeRatio(v: number | null): string {
-  return v === null ? "—" : v.toFixed(1);
+function fmtEvToEbitda(v: number | null): string {
+  return v === null ? "—" : `${v.toFixed(1)}x`;
+}
+
+// Alpha Vantage's fiscalDateEnding comes back "YYYY-MM-DD" — reformatted to
+// MM/DD/YYYY for display per this table's date convention.
+function fmtDate(v: string): string {
+  const parts = v.split("-");
+  if (parts.length !== 3) return v || "—";
+  const [y, m, d] = parts;
+  return `${m}/${d}/${y}`;
 }
 
 function fmtPct(v: number | null): string {
@@ -121,17 +161,17 @@ export default function AIEarningsPanel() {
             <table className="mono">
               <thead>
                 <tr>
-                  <th>Ticker</th>
-                  <th>Tier</th>
-                  <th>P/E Ratio</th>
-                  <th>Latest Qtr</th>
-                  <th>Coverage</th>
-                  <th>Capex/Rev</th>
-                  <th>Financing</th>
-                  <th>Trend</th>
-                  <th>Buyback Δ YoY</th>
-                  <th>Interest Exp YoY</th>
-                  <th>Fragility Score</th>
+                  <th title={COLUMN_TOOLTIPS.ticker}>Ticker</th>
+                  <th title={COLUMN_TOOLTIPS.tier}>Tier</th>
+                  <th title={COLUMN_TOOLTIPS.evToEbitda}>EV/EBITDA</th>
+                  <th title={COLUMN_TOOLTIPS.latestQuarter}>Latest Qtr</th>
+                  <th title={COLUMN_TOOLTIPS.coverage}>Coverage</th>
+                  <th title={COLUMN_TOOLTIPS.capexToRevenue}>Capex/Rev</th>
+                  <th title={COLUMN_TOOLTIPS.financing}>Financing</th>
+                  <th title={COLUMN_TOOLTIPS.trend}>Trend</th>
+                  <th title={COLUMN_TOOLTIPS.buybackDelta}>Buyback Δ YoY</th>
+                  <th title={COLUMN_TOOLTIPS.interestExpense}>Interest Exp YoY</th>
+                  <th title={COLUMN_TOOLTIPS.fragilityScore}>Fragility Score</th>
                 </tr>
               </thead>
               <tbody>
@@ -144,8 +184,8 @@ export default function AIEarningsPanel() {
                     <td>
                       <span className={`event-chip tier-${s.tier}`}>{TIER_LABELS[s.tier]}</span>
                     </td>
-                    <td>{fmtPeRatio(s.peRatio)}</td>
-                    <td>{s.latestQuarter}</td>
+                    <td>{fmtEvToEbitda(s.evToEbitda)}</td>
+                    <td>{fmtDate(s.latestQuarter)}</td>
                     <td>{fmtRatio(s.capexCoverageRatio)}x</td>
                     <td>{fmtPct(s.capexToRevenue)}</td>
                     <td>{fmtRatio(s.financingDependency)}x</td>
@@ -157,28 +197,21 @@ export default function AIEarningsPanel() {
                     <td className={scoreClass(s.fragilityScore)}>{fmtRatio(s.fragilityScore)}</td>
                   </tr>
                 ))}
-                {data.scores.length === 0 && (
-                  <tr>
-                    <td colSpan={11} className="skeleton">
-                      No tickers returned usable fundamentals data.
-                      {data.diagnostics && data.diagnostics.length > 0 ? (
-                        <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem", textAlign: "left" }}>
-                          {data.diagnostics.slice(0, 12).map((d, i) => (
-                            <li key={i}>{d}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <>
-                          {" "}
-                          Check ALPHA_VANTAGE_API_KEY and Vercel logs for <code>[ai-earnings]</code> lines.
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
+          {data.diagnostics && data.diagnostics.length > 0 && (
+            <details className="table-accordion">
+              <summary>
+                Fetch diagnostics ({data.diagnostics.length}) — why a row above shows &ldquo;—&rdquo; for some columns
+              </summary>
+              <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem" }}>
+                {data.diagnostics.slice(0, 24).map((d, i) => (
+                  <li key={i}>{d}</li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 
@@ -252,18 +285,22 @@ export default function AIEarningsPanel() {
           fragility metrics, not force-fit into the buyer-side tiers above). All figures come from
           Alpha Vantage&apos;s <code>CASH_FLOW</code> and <code>INCOME_STATEMENT</code> endpoints
           (same <code>ALPHA_VANTAGE_API_KEY</code> used elsewhere in this app) — 2 requests per
-          ticker, 18 total per load (27 with P/E Ratio below), cached 24 hours since quarterly
-          fundamentals only change 4x/year; a rate-limited or missing ticker just drops out of the
-          table rather than failing the page. The Fragility Score is cross-sectional across the
+          ticker, 18 total per load (27 with EV/EBITDA below), cached 24 hours since quarterly
+          fundamentals only change 4x/year. Every ticker in the universe always gets a row —
+          a rate-limited or missing fetch leaves that ticker&apos;s affected columns as “—” instead
+          of dropping the row, so the table is always exactly {AI_EARNINGS_UNIVERSE.length} rows
+          regardless of how many Alpha Vantage requests happened to clear the rate limit on a
+          given load (see the fetch diagnostics disclosure above the table when that happens). The
+          Fragility Score is cross-sectional across the
           <em> entire</em> universe (all four tiers together, not scored separately per tier) —
           adding Tier 4 shifts the comparison pool for every ticker&apos;s z-score, same as any
           universe change would.
         </p>
         <p>
-          <strong>P/E Ratio</strong> is trailing P/E from Alpha Vantage&apos;s <code>OVERVIEW</code>{" "}
-          endpoint (one more request per ticker, same key) — a valuation reference alongside the
-          fragility metrics, not itself part of the Fragility Score. Shows “—” for unprofitable
-          companies (negative trailing EPS) or if unavailable.
+          <strong>EV/EBITDA</strong> comes from Alpha Vantage&apos;s <code>OVERVIEW</code> endpoint
+          (one more request per ticker, same key) — a capital-structure-neutral valuation reference
+          alongside the fragility metrics, not itself part of the Fragility Score. Shows “—” when
+          EBITDA is negative or unavailable.
         </p>
         <p>
           <strong>Coverage</strong> = operating cash flow ÷ capex, latest quarter (below 1.0x means

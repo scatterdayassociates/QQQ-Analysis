@@ -139,26 +139,31 @@ async function fetchStatement(
 }
 
 interface AlphaVantageOverviewResponse {
-  PERatio?: string;
+  EVToEBITDA?: string;
   Information?: string;
   Note?: string;
 }
 
 /**
  * Alpha Vantage's OVERVIEW endpoint (function=OVERVIEW&symbol=X) — the
- * source for trailing P/E, a valuation ratio orthogonal to the capex/
- * financing metrics fetched above. One request per ticker (no bulk mode),
- * same convention as the rest of this file's Alpha Vantage calls.
- * PERatio comes back as the literal string "None" for unprofitable
- * companies (negative trailing EPS) — those resolve to null rather than a
- * misleading number.
+ * source for EV/EBITDA, a valuation ratio orthogonal to the capex/financing
+ * metrics fetched above. One request per ticker (no bulk mode), same
+ * convention as the rest of this file's Alpha Vantage calls. Previously
+ * fetched trailing P/E; swapped for EV/EBITDA (per request, matching
+ * Catalyst Tracker's own P/E-to-EV/EBITDA swap) since it's
+ * capital-structure-neutral — accounts for debt/cash on the balance sheet,
+ * unlike P/E — and comparable across this universe's very different
+ * leverage profiles (hyperscalers vs. CoreWeave vs. memory makers).
+ * EVToEBITDA comes back as the literal string "None" when EBITDA is
+ * negative/unavailable — those resolve to null rather than a misleading
+ * number.
  */
-async function getPeRatiosByTicker(tickers: string[], notes: string[]): Promise<Map<string, number>> {
+async function getEvToEbitdaByTicker(tickers: string[], notes: string[]): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
   if (!apiKey) {
-    notes.push("P/E ratios: ALPHA_VANTAGE_API_KEY is not set");
+    notes.push("EV/EBITDA: ALPHA_VANTAGE_API_KEY is not set");
     return result;
   }
 
@@ -179,11 +184,11 @@ async function getPeRatiosByTicker(tickers: string[], notes: string[]): Promise<
           notes.push(`${ticker} OVERVIEW: ${(data.Information || data.Note || "").slice(0, 200)}`);
           return;
         }
-        const pe = Number(data.PERatio);
-        if (data.PERatio && data.PERatio !== "None" && Number.isFinite(pe)) {
-          result.set(ticker, pe);
+        const evToEbitda = Number(data.EVToEBITDA);
+        if (data.EVToEBITDA && data.EVToEBITDA !== "None" && Number.isFinite(evToEbitda)) {
+          result.set(ticker, evToEbitda);
         } else {
-          notes.push(`${ticker} OVERVIEW: no usable PERatio (${data.PERatio ?? "missing"})`);
+          notes.push(`${ticker} OVERVIEW: no usable EVToEBITDA (${data.EVToEBITDA ?? "missing"})`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -292,7 +297,7 @@ export interface AiEarningsScore {
   ticker: string;
   name: string;
   tier: 1 | 2 | 3 | 4;
-  peRatio: number | null; // trailing P/E, null if unprofitable (negative EPS) or unavailable
+  evToEbitda: number | null; // EV/EBITDA, null if EBITDA is negative/unavailable
   latestQuarter: string;
   capexCoverageRatio: number | null;
   capexToRevenue: number | null; // trailing 4Q average
@@ -471,35 +476,47 @@ export interface AiEarningsData {
 
 export async function getAiEarningsData(expiration?: string): Promise<AiEarningsData> {
   const notes: string[] = [];
-  const [perTicker, peRatiosByTicker] = await Promise.all([
+  const [perTicker, evToEbitdaByTicker] = await Promise.all([
     Promise.all(
       AI_EARNINGS_UNIVERSE.map(async (t) => {
         const quarters = await getQuarterlyMetrics(t.ticker, notes);
         return { meta: t, quarters };
       })
     ),
-    getPeRatiosByTicker(
+    getEvToEbitdaByTicker(
       AI_EARNINGS_UNIVERSE.map((t) => t.ticker),
       notes
     ),
   ]);
 
+  // Every ticker in AI_EARNINGS_UNIVERSE gets a row, always — previously a
+  // ticker with a failed/rate-limited CASH_FLOW or INCOME_STATEMENT fetch
+  // was dropped from the table entirely, which made the row count swing
+  // unpredictably (1, 2, 5...) load to load purely based on which of the 18
+  // concurrent Alpha Vantage requests happened to clear the rate limit that
+  // particular time. A missing fetch now just leaves that ticker's metrics
+  // null (rendered as "—" in the UI) instead of erasing the row, so the
+  // table is always exactly tickersRequested rows long. tickersWithData
+  // still reports how many tickers had real quarterly data this load, for
+  // the "(X/9 tickers returned data)" indicator above the table.
+  let tickersWithFundamentals = 0;
   const raw: (Omit<AiEarningsScore, "fragilityScore"> & { fragilityScore: null })[] = [];
   for (const { meta, quarters } of perTicker) {
-    if (!quarters || quarters.length === 0) continue;
-    const latest = quarters[0];
+    const hasQuarters = quarters !== null && quarters.length > 0;
+    if (hasQuarters) tickersWithFundamentals++;
+    const latest = hasQuarters ? quarters![0] : null;
     raw.push({
       ticker: meta.ticker,
       name: meta.name,
       tier: meta.tier,
-      peRatio: peRatiosByTicker.get(meta.ticker) ?? null,
-      latestQuarter: latest.fiscalDateEnding,
-      capexCoverageRatio: capexCoverageRatio(latest),
-      capexToRevenue: trailingAverage(quarters, capexToRevenue),
-      financingDependency: trailingAverage(quarters, financingDependency),
-      coverageTrend: coverageTrend(quarters),
-      buybackDeltaYoy: buybackDeltaYoy(quarters),
-      interestExpenseYoyGrowth: interestExpenseYoyGrowth(quarters),
+      evToEbitda: evToEbitdaByTicker.get(meta.ticker) ?? null,
+      latestQuarter: latest?.fiscalDateEnding ?? "",
+      capexCoverageRatio: latest ? capexCoverageRatio(latest) : null,
+      capexToRevenue: hasQuarters ? trailingAverage(quarters!, capexToRevenue) : null,
+      financingDependency: hasQuarters ? trailingAverage(quarters!, financingDependency) : null,
+      coverageTrend: hasQuarters ? coverageTrend(quarters!) : null,
+      buybackDeltaYoy: hasQuarters ? buybackDeltaYoy(quarters!) : null,
+      interestExpenseYoyGrowth: hasQuarters ? interestExpenseYoyGrowth(quarters!) : null,
       fragilityScore: null,
     });
   }
@@ -552,7 +569,7 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
   });
 
   console.error(
-    `[ai-earnings] ${scores.length}/${AI_EARNINGS_UNIVERSE.length} tickers returned usable fundamentals data.`
+    `[ai-earnings] ${tickersWithFundamentals}/${AI_EARNINGS_UNIVERSE.length} tickers returned usable fundamentals data (all ${scores.length} still shown in the table).`
   );
 
   let optionsRichness: OptionsRichness[] | undefined;
@@ -569,7 +586,7 @@ export async function getAiEarningsData(expiration?: string): Promise<AiEarnings
   return {
     asOf: new Date().toISOString().slice(0, 10),
     scores,
-    tickersWithData: scores.length,
+    tickersWithData: tickersWithFundamentals,
     tickersRequested: AI_EARNINGS_UNIVERSE.length,
     ...(optionsRichness ? { optionsRichness } : {}),
     ...(notes.length > 0 ? { diagnostics: notes } : {}),
