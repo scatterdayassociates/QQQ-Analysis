@@ -142,8 +142,19 @@ interface FredObservation {
  * either.)
  */
 async function fetchFredSeriesWithDates(seriesId: string): Promise<FredObservation[]> {
+  // Deliberately `cache: "no-store"`, not `next: { revalidate: N }` — this
+  // is only ever called from refreshRegimeData, which itself is only ever
+  // invoked when a caller has already decided a genuinely fresh look at
+  // FRED is wanted (the hourly cron, a manual force-refresh, or
+  // ensureFreshRegimeData's own "DB looks stale" check). A time-based
+  // cache here would apply across *all* of those callers keyed by URL —
+  // confirmed live as the reason a manual "force refresh" kept returning
+  // the same stale FRED snapshot the hourly cron had already cached
+  // earlier that hour, defeating the point of both. Concurrent calls
+  // within the same request are already deduped by refreshInFlight below,
+  // so there's no remaining upside to caching this fetch.
   const res = await fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`, {
-    next: { revalidate: 3600 },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`FRED fetch failed for ${seriesId}: HTTP ${res.status}`);
@@ -195,7 +206,10 @@ async function fetchAlphaVantageTreasuryYield(maturity: "10year" | "2year"): Pro
     url.searchParams.set("interval", "daily");
     url.searchParams.set("maturity", maturity);
     url.searchParams.set("apikey", apiKey);
-    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+    // Same reasoning as fetchFredSeriesWithDates above: this only ever runs
+    // as part of refreshRegimeData, where a stale cached response would
+    // silently defeat the whole point of the 24h-staleness fallback.
+    const res = await fetch(url.toString(), { cache: "no-store" });
     if (!res.ok) {
       console.error(`[yield-regime] Alpha Vantage TREASURY_YIELD (${maturity}) request failed: ${res.status}`);
       return [];
