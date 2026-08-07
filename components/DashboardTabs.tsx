@@ -6,6 +6,7 @@ import FundamentalAnalysisPanel from "./FundamentalAnalysisPanel";
 import CatalystPanel from "./CatalystPanel";
 import AIEarningsPanel from "./AIEarningsPanel";
 import YieldRegimePanel from "./YieldRegimePanel";
+import SmartMoneyPanel from "./SmartMoneyPanel";
 
 const TABS = [
   { key: "daypart", label: "Daypart Volume Analysis" },
@@ -13,6 +14,7 @@ const TABS = [
   { key: "catalysts", label: "Catalyst Tracker" },
   { key: "ai-earnings", label: "AI Earnings Analysis" },
   { key: "yield-regime", label: "TBill Yield Spread Analysis" },
+  { key: "smart-money", label: "Smart Money Pipeline" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -42,6 +44,7 @@ export default function DashboardTabs() {
       {active === "catalysts" && <CatalystPanel />}
       {active === "ai-earnings" && <AIEarningsPanel />}
       {active === "yield-regime" && <YieldRegimePanel />}
+      {active === "smart-money" && <SmartMoneyPanel />}
     </div>
   );
 }
