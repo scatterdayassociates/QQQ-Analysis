@@ -32,7 +32,7 @@ export default function SmartMoneyControls({
   const [tempWeights, setTempWeights] = useState<ScoreWeights>(weights);
 
   const handleFundToggle = (fund: string) => {
-    setSelectedFunds(
+    onFundsChange(
       selectedFunds.includes(fund)
         ? selectedFunds.filter((f) => f !== fund)
         : [...selectedFunds, fund]
