@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import SmartMoneyControls from "./SmartMoneyControls";
 import WeightSummary from "./WeightSummary";
 import CompositeLeaderboard from "./CompositeLeaderboard";
@@ -47,6 +47,12 @@ export default function SmartMoneyPanel() {
   const [error, setError] = useState<string | null>(null);
   const [selectedTicker, setSelectedTicker] = useState<Score | null>(null);
 
+  // Create stable dependency key to track changes
+  const dependencyKey = useMemo(
+    () => `${selectedUniverse}|${selectedFunds.join(",")}|${JSON.stringify(weights)}`,
+    [selectedUniverse, selectedFunds, weights]
+  );
+
   const fetchScores = async () => {
     setLoading(true);
     setError(null);
@@ -73,7 +79,8 @@ export default function SmartMoneyPanel() {
 
   useEffect(() => {
     fetchScores();
-  }, [selectedUniverse, selectedFunds, weights]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dependencyKey]);
 
   const handleWeightsUpdate = (newWeights: ScoreWeights) => {
     setWeights(newWeights);
