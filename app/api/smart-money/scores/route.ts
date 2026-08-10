@@ -63,6 +63,10 @@ export async function GET(request: NextRequest) {
     });
 
     try {
+      // Create AbortController for timeout (10 seconds)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const backendResponse = await fetch(
         `${backendUrl}/api/smart-money/scores?${queryParams.toString()}`,
         {
@@ -70,9 +74,11 @@ export async function GET(request: NextRequest) {
           headers: {
             "Content-Type": "application/json",
           },
-          timeout: 10000, // 10 second timeout
+          signal: controller.signal,
         }
       );
+
+      clearTimeout(timeoutId);
 
       if (backendResponse.ok) {
         const backendData = await backendResponse.json();
