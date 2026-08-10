@@ -32,12 +32,45 @@ class ThirteenFIngestor(BaseIngestor):
             List of raw 13F position records
         """
         try:
+            from smart_money_pipeline.data_sources.sec_edgar import SECEdgarAPI
+
             logger.info("Fetching 13F-HR filings from SEC EDGAR...")
 
-            # Placeholder: Production would fetch 13F filings for each fund_cik
-            # and parse the XML table format (IT1, IT2, etc.)
+            # Initialize SEC EDGAR API client
+            sec_client = SECEdgarAPI()
 
             thirteenf_data = []
+
+            # Fetch 13F filings for each tracked fund
+            for fund_name, fund_cik in self.fund_ciks.items():
+                try:
+                    logger.info(f"Fetching 13F for {fund_name} (CIK: {fund_cik})")
+
+                    # Fetch filing metadata
+                    filings = sec_client.fetch_13f_filings(fund_cik)
+
+                    # Fetch and parse details for each filing
+                    for filing in filings:
+                        try:
+                            details = sec_client.fetch_13f_details(
+                                filing.get("link", "")
+                            )
+
+                            # Add fund metadata to each holding
+                            for holding in details.get("holdings", []):
+                                holding["fund_cik"] = fund_cik
+                                holding["fund_name"] = fund_name
+                                holding["period_of_report"] = filing.get("date")
+                                holding["filed_at"] = filing.get("fetched_at")
+                                thirteenf_data.append(holding)
+
+                        except Exception as e:
+                            logger.debug(f"Error fetching 13F details: {e}")
+                            continue
+
+                except Exception as e:
+                    logger.debug(f"Error fetching 13F for {fund_name}: {e}")
+                    continue
 
             logger.info(f"Found {len(thirteenf_data)} 13F positions")
             return thirteenf_data

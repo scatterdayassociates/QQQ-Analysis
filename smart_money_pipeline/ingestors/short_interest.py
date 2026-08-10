@@ -22,21 +22,41 @@ class ShortInterestIngestor(BaseIngestor):
 
     def fetch(self) -> List[Dict[str, Any]]:
         """
-        Fetch FINRA short interest data.
+        Fetch FINRA short interest data for all tickers in Nasdaq-100.
 
         Returns:
             List of raw short interest records
         """
         try:
+            from smart_money_pipeline.data_sources.finra_short_interest import (
+                get_short_interest_data,
+            )
+            from smart_money_pipeline.common.db import execute_query
+
             logger.info("Fetching FINRA short interest data...")
 
-            # Placeholder: Production would fetch from FINRA
-            # FINRA publishes bi-weekly short interest data
-            # Available endpoints:
-            # - FINRA Market Data Gateway
-            # - CSV downloads at: http://www.finra.org/Research/MarketData/
+            # Get all tickers in database
+            query = "SELECT DISTINCT ticker FROM ticker_to_cik WHERE ticker IS NOT NULL"
+            results = execute_query(query, fetch_one=False)
+
+            if not results:
+                logger.warning("No tickers found in database")
+                return []
+
+            tickers = [r[0] for r in results if r[0]]
+            logger.info(f"Fetching short interest for {len(tickers)} tickers")
 
             short_interest_data = []
+
+            # Fetch short interest for each ticker
+            for ticker in tickers:
+                try:
+                    si_records = get_short_interest_data(ticker, days=180)
+                    short_interest_data.extend(si_records)
+
+                except Exception as e:
+                    logger.debug(f"Error fetching short interest for {ticker}: {e}")
+                    continue
 
             logger.info(f"Found {len(short_interest_data)} short interest records")
             return short_interest_data

@@ -30,17 +30,51 @@ class Form4Ingestor(BaseIngestor):
             List of raw Form 4 filing records
         """
         try:
-            # This is a placeholder - actual implementation requires:
-            # 1. Get list of CIKs from ticker_to_cik table
-            # 2. Query SEC EDGAR for each CIK's Form 4 filings
-            # 3. Parse filing documents to extract transaction details
-            # 4. Filter for buys (transaction_code = 'P') vs sales ('S')
+            from smart_money_pipeline.data_sources.sec_edgar import SECEdgarAPI
+            from smart_money_pipeline.common.db import execute_query
 
             logger.info("Fetching Form 4 data from SEC EDGAR...")
 
-            # For now, return empty list (will be populated with real data)
-            # Production implementation would query SEC API with rate limiting
+            # Get list of CIKs from database
+            query = "SELECT DISTINCT cik FROM ticker_to_cik LIMIT 100"
+            results = execute_query(query, fetch_one=False)
+
+            if not results:
+                logger.warning("No CIKs found in database")
+                return []
+
+            ciks = [r[0] for r in results if r[0]]
+            logger.info(f"Fetching Form 4 data for {len(ciks)} companies")
+
+            # Initialize SEC EDGAR API client
+            sec_client = SECEdgarAPI()
+
             form4_data = []
+
+            # Fetch Form 4 filings for each CIK
+            for cik in ciks:
+                try:
+                    # Fetch filing metadata
+                    filings = sec_client.fetch_form4_filings(cik, self.lookback_days)
+
+                    # Fetch and parse details for each filing
+                    for filing in filings:
+                        try:
+                            details = sec_client.fetch_form4_details(filing.get("link", ""))
+
+                            # Add metadata
+                            for tx in details.get("transactions", []):
+                                tx["cik"] = cik
+                                tx["filing_date"] = filing.get("date")
+                                form4_data.append(tx)
+
+                        except Exception as e:
+                            logger.debug(f"Error fetching Form 4 details: {e}")
+                            continue
+
+                except Exception as e:
+                    logger.debug(f"Error fetching Form 4 for CIK {cik}: {e}")
+                    continue
 
             logger.info(f"Found {len(form4_data)} Form 4 transactions")
             return form4_data

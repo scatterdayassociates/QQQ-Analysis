@@ -35,11 +35,38 @@ class Filings13DIngestor(BaseIngestor):
             List of raw 13D filing records
         """
         try:
+            from smart_money_pipeline.data_sources.sec_edgar import SECEdgarAPI
+
             logger.info("Fetching 13D filings from SEC EDGAR...")
 
-            # Placeholder: Production would query SEC EDGAR for 13D/13D-A filings
-            # filtered for the lookback period
+            # Initialize SEC EDGAR API client
+            sec_client = SECEdgarAPI()
+
+            # Fetch recent 13D filings
+            filings = sec_client.fetch_13d_filings(self.lookback_days)
+
             filings_13d_data = []
+
+            # Fetch and parse details for each filing
+            for filing in filings:
+                try:
+                    details = sec_client.fetch_13d_details(filing.get("link", ""))
+
+                    # Parse filing data
+                    record = {
+                        "cik": "",  # Would extract from filing
+                        "ticker": "",  # Would extract from filing
+                        "filer_name": "",  # Would extract from filing
+                        "pct_owned": details.get("pct_owned", 0.0),
+                        "filing_date": filing.get("date"),
+                        "is_amendment": "13D-A" in filing.get("link", ""),
+                        "filing_text": details.get("filing_text", ""),
+                    }
+                    filings_13d_data.append(record)
+
+                except Exception as e:
+                    logger.debug(f"Error fetching 13D details: {e}")
+                    continue
 
             logger.info(f"Found {len(filings_13d_data)} 13D filings")
             return filings_13d_data

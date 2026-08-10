@@ -28,20 +28,18 @@ class COTIngestor(BaseIngestor):
 
     def fetch(self) -> List[Dict[str, Any]]:
         """
-        Fetch CFTC COT data.
+        Fetch CFTC COT data for NQ (E-mini Nasdaq-100).
 
         Returns:
             List of raw COT records
         """
         try:
-            logger.info("Fetching COT data from CFTC...")
+            from smart_money_pipeline.data_sources.cftc_cot import get_nq_cot_data
 
-            # Placeholder: Production would fetch from CFTC API
-            # Available endpoints:
-            # - CFTC Disaggregated COT (most useful for our purposes)
-            # - Historical data at: https://www.cftc.gov/MarketReports/CommitmentsofTraders/HistoricalDataFiles
+            logger.info("Fetching COT data from CFTC for NQ contract...")
 
-            cot_data = []
+            # Fetch NQ (E-mini Nasdaq-100) COT data
+            cot_data = get_nq_cot_data(weeks=52)
 
             logger.info(f"Found {len(cot_data)} COT records")
             return cot_data
