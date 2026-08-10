@@ -8,6 +8,8 @@ Implements all 6 scoring sub-functions and composite score calculation:
 4. Short Interest Momentum Score - short interest trend strength
 5. 13F Conviction Score - smart money fund concentration
 6. Composite Score - weighted combination of all sub-scores
+
+Optimized with query caching and data freshness checks.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -17,6 +19,11 @@ import statistics
 
 from smart_money_pipeline.config import get_config
 from smart_money_pipeline.common.db import execute_query, get_connection
+from smart_money_pipeline.scoring.cache import (
+    QueryCache,
+    DataFreshnessMonitor,
+    OptimizedScoreQueries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +31,23 @@ logger = logging.getLogger(__name__)
 class ScoringFormulas:
     """All scoring formulas for Smart Money Pipeline."""
 
-    def __init__(self):
-        """Initialize scoring formulas with configuration."""
+    def __init__(self, use_cache: bool = True):
+        """
+        Initialize scoring formulas with configuration.
+
+        Args:
+            use_cache: Whether to use query caching (default True)
+        """
         self.config = get_config()
         self.weights = self.config.scoring.weights
+        self.cache = QueryCache(ttl_seconds=3600) if use_cache else None
+        self.freshness_monitor = DataFreshnessMonitor()
+
+        # Initialize data freshness on startup
+        try:
+            self.freshness_monitor.refresh_timestamps()
+        except Exception as e:
+            logger.warning(f"Could not initialize data freshness monitor: {e}")
 
     # ========== SUB-SCORE 1: INSIDER CLUSTER SCORE ==========
 
@@ -54,31 +74,48 @@ class ScoringFormulas:
             Score 0-100, or None if insufficient data
         """
         try:
+            # Check data freshness
+            if not self.freshness_monitor.check_freshness("form4", as_of_date, max_age_days=30):
+                logger.warning(f"Form 4 data too old for {ticker} scoring")
+                return None
+
+            cache_key = f"insider_{ticker}_{as_of_date}"
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    logger.debug(f"Insider score cache HIT for {ticker}")
+                    return cached
+
             as_of = datetime.strptime(as_of_date, "%Y-%m-%d")
 
-            # Get insider buys in 30-day window
-            date_30d_ago = (as_of - timedelta(days=30)).strftime("%Y-%m-%d")
-            query_30d = """
-                SELECT COUNT(DISTINCT filer_name) as unique_insiders
-                FROM form4_transactions
-                WHERE ticker = %s
-                AND transaction_code = 'P'
-                AND transaction_date BETWEEN %s AND %s
-            """
-            result_30d = execute_query(query_30d, (ticker, date_30d_ago, as_of_date), fetch_one=True)
-            count_30d = result_30d[0] if result_30d else 0
+            # Use optimized query to get all insider transactions
+            transactions = OptimizedScoreQueries.get_insider_transactions(ticker, lookback_days=90)
 
-            # Get insider buys in 90-day window
-            date_90d_ago = (as_of - timedelta(days=90)).strftime("%Y-%m-%d")
-            query_90d = """
-                SELECT COUNT(DISTINCT filer_name) as unique_insiders
-                FROM form4_transactions
-                WHERE ticker = %s
-                AND transaction_code = 'P'
-                AND transaction_date BETWEEN %s AND %s
-            """
-            result_90d = execute_query(query_90d, (ticker, date_90d_ago, as_of_date), fetch_one=True)
-            count_90d = result_90d[0] if result_90d else 0
+            if not transactions:
+                logger.debug(f"No insider transactions found for {ticker}")
+                return None
+
+            # Count unique insiders in each window
+            count_30d = 0
+            count_90d = 0
+            date_30d_ago = (as_of - timedelta(days=30))
+            date_90d_ago = (as_of - timedelta(days=90))
+
+            seen_30d = set()
+            seen_90d = set()
+
+            for filer_name, trans_date_str, quantity in transactions:
+                trans_date = datetime.strptime(trans_date_str, "%Y-%m-%d") if isinstance(trans_date_str, str) else trans_date_str
+
+                if trans_date >= date_30d_ago:
+                    if filer_name not in seen_30d:
+                        count_30d += 1
+                        seen_30d.add(filer_name)
+
+                if trans_date >= date_90d_ago:
+                    if filer_name not in seen_90d:
+                        count_90d += 1
+                        seen_90d.add(filer_name)
 
             # Average number of insiders for normalization (baseline ~3-5)
             avg_insiders = 3.5
@@ -88,7 +125,13 @@ class ScoringFormulas:
             score_90d = (count_90d / avg_insiders) * self.config.scoring.insider_90d_weight * 100
 
             score = score_30d + score_90d
-            return min(score, 100.0)  # Cap at 100
+            score = min(score, 100.0)  # Cap at 100
+
+            # Cache result
+            if self.cache:
+                self.cache.set(cache_key, score)
+
+            return score
 
         except Exception as e:
             logger.warning(f"Error calculating insider cluster score for {ticker}: {e}")
@@ -117,24 +160,31 @@ class ScoringFormulas:
             Score 0-100, or None if no 13D filings
         """
         try:
+            # Check data freshness
+            if not self.freshness_monitor.check_freshness("filings_13d", as_of_date, max_age_days=60):
+                logger.warning(f"13D filing data too old for {ticker} scoring")
+                # Don't return None - 13D data doesn't update frequently
+                # Continue with stale data if needed
+
+            cache_key = f"activist_{ticker}_{as_of_date}"
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    logger.debug(f"Activist score cache HIT for {ticker}")
+                    return cached
+
             as_of = datetime.strptime(as_of_date, "%Y-%m-%d")
 
-            # Get most recent 13D filing
-            query = """
-                SELECT filing_date, is_amendment, activist_keyword_flag
-                FROM filings_13d
-                WHERE ticker = %s
-                AND filing_date <= %s
-                ORDER BY filing_date DESC
-                LIMIT 1
-            """
-            result = execute_query(query, (ticker, as_of_date), fetch_one=True)
+            # Use optimized query to get recent 13D filings
+            filings = OptimizedScoreQueries.get_recent_13d_filings(ticker, lookback_days=365)
 
-            if not result:
+            if not filings:
                 return 0.0  # No activist filings
 
-            filing_date_str, is_amendment, activist_flag = result
-            days_since = (as_of - datetime.strptime(filing_date_str, "%Y-%m-%d")).days
+            # Get most recent filing
+            filing_date_str, is_amendment, activist_flag = filings[0]
+            filing_date = datetime.strptime(filing_date_str, "%Y-%m-%d") if isinstance(filing_date_str, str) else filing_date_str
+            days_since = (as_of - filing_date.replace(hour=0, minute=0, second=0, microsecond=0)).days
 
             # Score based on recency and activist keyword presence
             if days_since <= self.config.scoring.activist_fresh_days:
@@ -149,6 +199,10 @@ class ScoringFormulas:
             # Boost score if activist keywords found
             if activist_flag:
                 base_score = min(base_score * 1.2, 100.0)
+
+            # Cache result
+            if self.cache:
+                self.cache.set(cache_key, base_score)
 
             return base_score
 
@@ -179,6 +233,11 @@ class ScoringFormulas:
             Score 0-100, or None if insufficient data
         """
         try:
+            # Check data freshness
+            if not self.freshness_monitor.check_freshness("cot", as_of_date, max_age_days=14):
+                logger.warning(f"COT data too old for {ticker} scoring")
+                return None
+
             # Map ticker to futures contract (simplified mapping)
             if ticker in ["QQQ", "TSLA", "AMZN", "NVDA", "AAPL", "MSFT"]:
                 contract = "NQ"  # Nasdaq-100 index
@@ -188,23 +247,19 @@ class ScoringFormulas:
                 # Default to broad market
                 contract = "ES"
 
-            # Get historical COT positions (90-day lookback)
-            lookback_days = 90
-            date_start = (
-                datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=lookback_days)
-            ).strftime("%Y-%m-%d")
+            cache_key = f"cot_{contract}_{as_of_date}"
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    logger.debug(f"COT score cache HIT for {contract}")
+                    return cached
 
-            query = """
-                SELECT leveraged_funds_net
-                FROM cot_positions
-                WHERE contract_name = %s
-                AND report_date BETWEEN %s AND %s
-                ORDER BY report_date ASC
-            """
-            results = execute_query(query, (contract, date_start, as_of_date), fetch_one=False)
+            # Get historical COT positions (90-day lookback)
+            results = OptimizedScoreQueries.get_cot_history(contract, lookback_days=90)
 
             if not results or len(results) < 5:
-                return None  # Insufficient data
+                logger.debug(f"Insufficient COT data for {contract}")
+                return None
 
             positions = [r[0] for r in results]
 
@@ -223,7 +278,13 @@ class ScoringFormulas:
 
             # Scale z-score to 0-100 (±2σ → 0-100, mean → 50)
             score = 50 + (z_score * 25)
-            return max(0.0, min(score, 100.0))
+            score = max(0.0, min(score, 100.0))
+
+            # Cache result
+            if self.cache:
+                self.cache.set(cache_key, score)
+
+            return score
 
         except Exception as e:
             logger.warning(f"Error calculating COT z-score for {ticker}: {e}")
@@ -254,23 +315,26 @@ class ScoringFormulas:
             Score 0-100, or None if insufficient data
         """
         try:
+            # Check data freshness
+            if not self.freshness_monitor.check_freshness("short_interest", as_of_date, max_age_days=30):
+                logger.warning(f"Short interest data too old for {ticker} scoring")
+                return None
+
+            cache_key = f"short_int_{ticker}_{as_of_date}"
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    logger.debug(f"Short interest score cache HIT for {ticker}")
+                    return cached
+
             as_of = datetime.strptime(as_of_date, "%Y-%m-%d")
 
             # Get short interest data (90-day lookback)
-            lookback_days = 90
-            date_start = (as_of - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-
-            query = """
-                SELECT settlement_date, shares_short
-                FROM short_interest
-                WHERE ticker = %s
-                AND settlement_date BETWEEN %s AND %s
-                ORDER BY settlement_date ASC
-            """
-            results = execute_query(query, (ticker, date_start, as_of_date), fetch_one=False)
+            results = OptimizedScoreQueries.get_short_interest_history(ticker, lookback_days=90)
 
             if not results or len(results) < 3:
-                return None  # Insufficient data
+                logger.debug(f"Insufficient short interest data for {ticker}")
+                return None
 
             shares_short_history = [r[1] for r in results]
 
@@ -282,9 +346,10 @@ class ScoringFormulas:
                     changes.append(pct_change)
 
             if len(changes) < 2:
+                logger.debug(f"Insufficient change data for {ticker}")
                 return None
 
-            # Recent change (most recent 30 days)
+            # Recent change (most recent period)
             recent_change = changes[-1]
 
             # Historical standard deviation of changes
@@ -297,7 +362,13 @@ class ScoringFormulas:
 
             # Scale to 0-100
             score = 50 + (momentum * 25)
-            return max(0.0, min(score, 100.0))
+            score = max(0.0, min(score, 100.0))
+
+            # Cache result
+            if self.cache:
+                self.cache.set(cache_key, score)
+
+            return score
 
         except Exception as e:
             logger.warning(f"Error calculating short interest momentum score for {ticker}: {e}")
@@ -326,22 +397,22 @@ class ScoringFormulas:
             Score 0-100, or None if no 13F holdings
         """
         try:
+            # 13F data freshness check (note: updates quarterly, so larger window)
+            if not self.freshness_monitor.check_freshness("thirteenf", as_of_date, max_age_days=120):
+                logger.warning(f"13F filing data too old for {ticker} scoring")
+                # Don't return None - 13F data is quarterly, stale data is acceptable
+
+            cache_key = f"thirteenf_{ticker}_{as_of_date}"
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    logger.debug(f"13F conviction score cache HIT for {ticker}")
+                    return cached
+
             as_of = datetime.strptime(as_of_date, "%Y-%m-%d")
 
             # Get latest 13F positions for this ticker
-            lookback_days = self.config.scoring.thirteenf_filing_window_days
-            date_start = (as_of - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-
-            query = """
-                SELECT fund_name, pct_of_fund_portfolio, filed_at
-                FROM thirteenf_positions
-                WHERE ticker = %s
-                AND put_call_flag IS NULL  -- Stock positions only
-                AND period_of_report BETWEEN %s AND %s
-                ORDER BY pct_of_fund_portfolio DESC
-                LIMIT 10  -- Top 10 funds
-            """
-            results = execute_query(query, (ticker, date_start, as_of_date), fetch_one=False)
+            results = OptimizedScoreQueries.get_thirteenf_holdings(ticker, lookback_days=365)
 
             if not results:
                 return 0.0  # No 13F holdings
@@ -352,7 +423,17 @@ class ScoringFormulas:
 
             # Get recency boost from most recent filing
             most_recent_filing_str = results[0][2]
-            days_since_filing = (as_of - datetime.strptime(most_recent_filing_str, "%Y-%m-%d %H:%M:%S")).days
+            if isinstance(most_recent_filing_str, str):
+                # Parse timestamp string
+                try:
+                    filing_dt = datetime.strptime(most_recent_filing_str, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # Try just date format
+                    filing_dt = datetime.strptime(most_recent_filing_str, "%Y-%m-%d")
+            else:
+                filing_dt = most_recent_filing_str
+
+            days_since_filing = (as_of - filing_dt.replace(hour=0, minute=0, second=0, microsecond=0)).days
 
             if days_since_filing <= 45:
                 recency_boost = 1.0
@@ -363,7 +444,13 @@ class ScoringFormulas:
 
             # Calculate score
             score = avg_concentration * recency_boost * 100
-            return min(score, 100.0)
+            score = min(score, 100.0)
+
+            # Cache result
+            if self.cache:
+                self.cache.set(cache_key, score)
+
+            return score
 
         except Exception as e:
             logger.warning(f"Error calculating 13F conviction score for {ticker}: {e}")
@@ -426,6 +513,35 @@ class ScoringFormulas:
 
         composite = (weighted_sum / total_weight) * 100
         return min(composite, 100.0)
+
+    # ========== DIAGNOSTICS ==========
+
+    def get_cache_stats(self) -> Dict[str, int]:
+        """Get cache statistics."""
+        if not self.cache:
+            return {"cache_enabled": False}
+
+        stats = self.cache.stats()
+        stats["cache_enabled"] = True
+        return stats
+
+    def get_data_freshness_status(self) -> Dict[str, Any]:
+        """Get current data freshness status for all sources."""
+        return self.freshness_monitor.get_status()
+
+    def refresh_data_timestamps(self) -> None:
+        """Manually refresh data freshness timestamps."""
+        try:
+            self.freshness_monitor.refresh_timestamps()
+            logger.info("✓ Data freshness timestamps refreshed")
+        except Exception as e:
+            logger.error(f"Error refreshing timestamps: {e}")
+
+    def clear_cache(self) -> None:
+        """Clear all cached scoring results."""
+        if self.cache:
+            self.cache.clear()
+            logger.info("✓ Scoring cache cleared")
 
     # ========== MAIN SCORING FUNCTION ==========
 

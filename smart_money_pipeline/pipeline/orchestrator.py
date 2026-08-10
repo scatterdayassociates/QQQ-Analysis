@@ -139,6 +139,14 @@ class PipelineOrchestrator:
                     "error": str(e),
                 }
 
+        # Refresh data freshness timestamps after all ingestors complete
+        logger.info("  → Refreshing data freshness timestamps...")
+        try:
+            self.scores_service.formulas.refresh_data_timestamps()
+            logger.info("    ✓ Data freshness timestamps updated")
+        except Exception as e:
+            logger.warning(f"    ⚠ Could not refresh freshness timestamps: {e}")
+
     def _calculate_and_store_scores(
         self, as_of_date: str, pipeline_stats: Dict[str, Any]
     ) -> None:

@@ -210,6 +210,86 @@ async def trigger_pipeline_immediately() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/scoring/cache-stats")
+async def get_cache_stats() -> Dict[str, Any]:
+    """
+    Get scoring cache statistics.
+
+    Returns:
+        JSON with cache hit rates and memory usage
+    """
+    try:
+        cache_stats = scores_service.formulas.get_cache_stats()
+        return {
+            "cache_stats": cache_stats,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error getting cache stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scoring/data-freshness")
+async def get_data_freshness() -> Dict[str, Any]:
+    """
+    Get data freshness status from all sources.
+
+    Returns:
+        JSON with last update timestamps and age for each data source
+    """
+    try:
+        freshness = scores_service.formulas.get_data_freshness_status()
+        return {
+            "data_freshness": freshness,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error getting data freshness: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/scoring/refresh-freshness")
+async def refresh_data_freshness() -> Dict[str, str]:
+    """
+    Manually refresh data freshness timestamps.
+    Call this after running the ingestion pipeline.
+
+    Returns:
+        JSON with refresh status
+    """
+    try:
+        scores_service.formulas.refresh_data_timestamps()
+        return {
+            "status": "refreshed",
+            "message": "Data freshness timestamps updated from database",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error refreshing freshness timestamps: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/scoring/clear-cache")
+async def clear_scoring_cache() -> Dict[str, str]:
+    """
+    Clear the scoring cache.
+    Use this to force fresh calculations for all tickers.
+
+    Returns:
+        JSON with clear status
+    """
+    try:
+        scores_service.formulas.clear_cache()
+        return {
+            "status": "cleared",
+            "message": "Scoring cache cleared - next scores will be calculated fresh",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/health")
 async def health_check() -> Dict[str, str]:
     """
