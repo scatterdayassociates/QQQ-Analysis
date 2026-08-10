@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Mock data generator for development/testing
-// In production, this would call the actual backend API at /api/smart-money
+// Mock data generator for development/testing (when backend unavailable)
 function generateMockScores() {
   const nasdaq100Tickers = [
     "AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "META", "GOOGL", "GOOG", "AVGO", "NFLX",
@@ -55,25 +54,41 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // TODO: In production, call the actual backend API
-    // Example:
-    // const backendResponse = await fetch(
-    //   `${process.env.BACKEND_API_URL}/api/smart-money/scores`,
-    //   {
-    //     method: "GET",
-    //     headers: {
-    //       "Content-Type": "application/json",
-    //       Authorization: `Bearer ${process.env.BACKEND_API_KEY}`,
-    //     },
-    //     body: JSON.stringify({
-    //       universe,
-    //       funds: funds.split(","),
-    //       weights,
-    //     }),
-    //   }
-    // );
+    // Try to call the Python backend API
+    const backendUrl = process.env.BACKEND_API_URL || "http://localhost:8000";
+    const queryParams = new URLSearchParams({
+      universe,
+      funds,
+      ...(weightsParam && { weights: weightsParam }),
+    });
 
-    // For now, return mock data
+    try {
+      const backendResponse = await fetch(
+        `${backendUrl}/api/smart-money/scores?${queryParams.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          timeout: 10000, // 10 second timeout
+        }
+      );
+
+      if (backendResponse.ok) {
+        const backendData = await backendResponse.json();
+        return NextResponse.json(backendData);
+      } else {
+        console.warn(
+          `Backend API returned ${backendResponse.status}, falling back to mock data`
+        );
+      }
+    } catch (backendError) {
+      console.warn(
+        `Backend API unavailable (${backendError instanceof Error ? backendError.message : "Unknown error"}), using mock data`
+      );
+    }
+
+    // Fall back to mock data
     const scores = generateMockScores();
 
     return NextResponse.json({
@@ -82,7 +97,8 @@ export async function GET(request: NextRequest) {
       weights,
       scores,
       timestamp: new Date().toISOString(),
-      note: "Using mock data. Replace with actual backend API call when ready.",
+      note: "Using mock data. Backend API unavailable or not configured.",
+      backend_url: backendUrl,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
