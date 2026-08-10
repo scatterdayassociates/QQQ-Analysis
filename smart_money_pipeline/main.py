@@ -17,6 +17,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from smart_money_pipeline.api.routes import router
 from smart_money_pipeline.common.db import initialize_pool
 from smart_money_pipeline.config import get_config
+from smart_money_pipeline.pipeline.scheduler import (
+    initialize_scheduler,
+    shutdown_scheduler,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +35,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """
     Startup and shutdown lifecycle for FastAPI application.
+    Initializes database pool and background scheduler.
     """
     # Startup
     logger.info("Starting Smart Money Pipeline API...")
@@ -42,10 +47,20 @@ async def lifespan(app: FastAPI):
         logger.error(f"✗ Failed to initialize database: {e}")
         sys.exit(1)
 
+    # Initialize scheduler for background pipeline tasks
+    logger.info("Initializing background scheduler...")
+    try:
+        initialize_scheduler()
+        logger.info("✓ Background scheduler initialized")
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize scheduler: {e}")
+        # Don't exit - scheduler is optional, API can still function
+
     yield
 
     # Shutdown
     logger.info("Shutting down Smart Money Pipeline API...")
+    shutdown_scheduler()
 
 
 # Create FastAPI app

@@ -11,6 +11,11 @@ from datetime import datetime
 
 from smart_money_pipeline.api.scores_service import ScoresService
 from smart_money_pipeline.config import get_config
+from smart_money_pipeline.pipeline.scheduler import (
+    get_scheduler_status,
+    schedule_immediate_pipeline,
+)
+from smart_money_pipeline.pipeline.orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/smart-money", tags=["smart-money"])
@@ -151,6 +156,58 @@ async def get_config_info() -> Dict[str, Any]:
             "batch_size": config.ingest.batch_size,
         },
     }
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_status_endpoint() -> Dict[str, Any]:
+    """
+    Get current scheduler status and scheduled jobs.
+
+    Returns:
+        JSON with scheduler state, running status, and job information
+    """
+    try:
+        status = get_scheduler_status()
+        return {
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error getting scheduler status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/scheduler/trigger")
+async def trigger_pipeline_immediately() -> Dict[str, Any]:
+    """
+    Manually trigger the pipeline to run immediately.
+
+    Returns:
+        JSON with job information and status
+    """
+    try:
+        logger.info("API triggered immediate pipeline execution")
+
+        # Schedule immediate execution
+        job = schedule_immediate_pipeline()
+
+        return {
+            "message": "Pipeline triggered for immediate execution",
+            "job_id": job.id,
+            "job_name": job.name,
+            "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    except RuntimeError as e:
+        logger.error(f"Scheduler not initialized: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Pipeline scheduler not available. Server may still be initializing.",
+        )
+    except Exception as e:
+        logger.error(f"Error triggering pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/health")
