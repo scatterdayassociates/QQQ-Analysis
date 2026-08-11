@@ -1,12 +1,16 @@
 "use client";
 
-import type { Score } from "./SmartMoneyPanel";
+import type { Score, DataFreshness } from "./SmartMoneyPanel";
 
 interface TickerDetailCardProps {
   score: Score;
+  dataFreshness?: DataFreshness | null;
 }
 
-export default function TickerDetailCard({ score }: TickerDetailCardProps) {
+export default function TickerDetailCard({
+  score,
+  dataFreshness,
+}: TickerDetailCardProps) {
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString("en-US", {
@@ -16,36 +20,39 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
     });
   };
 
+  // Get freshness indicator for a specific data source
+  const getFreshnessLabel = (sourceName: string): string => {
+    if (!dataFreshness || !dataFreshness[sourceName]) return "—";
+    const { last_update, age_days } = dataFreshness[sourceName];
+    if (!last_update || age_days === null) return "—";
+    return `as of ${last_update}`;
+  };
+
+  // 2x2 grid of 4 main panels as per brief
   const chartPanels = [
     {
       key: "insider",
-      title: "Insider Cluster",
+      title: "Insider Cluster Buys, Trailing 90d",
       value: score.insider_cluster_score,
-    },
-    {
-      key: "activist",
-      title: "Activist Flag",
-      value: score.activist_flag_score,
+      sourceKey: "form4",
     },
     {
       key: "cot",
-      title: "COT Z-Score",
+      title: "COT Leveraged Fund Net Position, Z-Score",
       value: score.cot_zscore,
+      sourceKey: "cot",
     },
     {
       key: "short",
-      title: "Short Interest Momentum",
+      title: "Short Interest & Days-to-Cover",
       value: score.short_interest_momentum_score,
+      sourceKey: "short_interest",
     },
     {
       key: "thirteenf",
-      title: "13F Conviction",
+      title: "13F Fund Position Deltas",
       value: score.thirteenf_conviction_score,
-    },
-    {
-      key: "composite",
-      title: "Composite Score",
-      value: score.composite_score,
+      sourceKey: "thirteenf",
     },
   ];
 
@@ -58,10 +65,10 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
         </div>
         <div className="detail-meta">
           <div className="composite-badge">
-            Composite <span className="badge-value">{Math.round(score.composite_score || 0)}</span>
-          </div>
-          <div className="updated-at">
-            updated {formatDate(score.as_of_date)}
+            Composite{" "}
+            <span className="badge-value">
+              {Math.round(score.composite_score || 0)}
+            </span>
           </div>
         </div>
       </div>
@@ -71,17 +78,25 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
           <div key={panel.key} className="chart-panel">
             <div className="panel-header">
               <h4>{panel.title}</h4>
+              <span className="panel-freshness">
+                {getFreshnessLabel(panel.sourceKey)}
+              </span>
             </div>
             <div className="panel-content">
               <div className="score-display">
                 {panel.value !== undefined && panel.value !== null ? (
                   <>
-                    <div className="large-number">{Math.round(panel.value)}</div>
+                    <div className="large-number">
+                      {Math.round(panel.value)}
+                    </div>
                     <div className="score-bar">
                       <div
                         className="score-bar-fill"
                         style={{
-                          width: `${Math.min(100, Math.max(0, panel.value))}%`,
+                          width: `${Math.min(
+                            100,
+                            Math.max(0, panel.value)
+                          )}%`,
                         }}
                       />
                     </div>
@@ -93,6 +108,17 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="methodology">
+        <p>
+          <strong>Methodology:</strong> This is positioning and futures-positioning
+          data, not price/volume data. Data has variable filing lags per source:
+          Form 4 ~T+2 days, 13D ~T+10 days, COT weekly, short interest biweekly,
+          13F ~T+45 days. A large 13F position does not necessarily indicate
+          directional conviction. The composite score is probabilistic, not a
+          recommendation.
+        </p>
       </div>
 
       <style jsx>{`
@@ -159,11 +185,6 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
           color: var(--focus);
         }
 
-        .updated-at {
-          color: var(--muted);
-          font-size: 0.65rem;
-        }
-
         .charts-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
@@ -181,9 +202,12 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
         }
 
         .panel-header {
-          padding: 0.6rem 0.8rem;
+          padding: 0.8rem;
           border-bottom: 1px solid var(--border);
           background: var(--surface);
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
         }
 
         .panel-header h4 {
@@ -193,6 +217,15 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
           color: var(--muted-2);
           text-transform: uppercase;
           letter-spacing: 0.08em;
+          line-height: 1.2;
+        }
+
+        .panel-freshness {
+          font-size: 0.6rem;
+          color: var(--muted);
+          font-weight: 400;
+          text-transform: none;
+          letter-spacing: 0;
         }
 
         .panel-content {
@@ -238,6 +271,40 @@ export default function TickerDetailCard({ score }: TickerDetailCardProps) {
           font-size: 0.8rem;
           color: var(--muted);
           text-align: center;
+        }
+
+        .methodology {
+          padding: 1rem 1.25rem;
+          border-top: 1px solid var(--border);
+          background: var(--surface);
+          font-size: 0.7rem;
+          line-height: 1.4;
+          color: var(--text-secondary);
+        }
+
+        .methodology p {
+          margin: 0;
+        }
+
+        .methodology strong {
+          color: var(--text);
+          font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+          .charts-grid {
+            grid-template-columns: 1fr;
+            gap: 0.6rem;
+            padding: 1rem;
+          }
+
+          .panel-header {
+            padding: 0.6rem;
+          }
+
+          .panel-header h4 {
+            font-size: 0.6rem;
+          }
         }
       `}</style>
     </div>

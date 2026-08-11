@@ -222,7 +222,7 @@ export default function SmartMoneyPanel() {
 
         {selectedTicker && (
           <div className="detail-section">
-            <TickerDetailCard score={selectedTicker} />
+            <TickerDetailCard score={selectedTicker} dataFreshness={dataFreshness} />
           </div>
         )}
       </div>
