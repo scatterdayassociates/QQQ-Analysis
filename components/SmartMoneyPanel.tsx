@@ -198,7 +198,7 @@ export default function SmartMoneyPanel() {
           disabled={loading}
           title="Manually refresh scores"
         >
-          {loading ? "Loading..." : "🔄 Refresh"}
+          {loading ? "Loading..." : "Refresh"}
         </button>
       </div>
 
