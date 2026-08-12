@@ -13,3 +13,6 @@ google-cloud-logging==3.5.0
 
 # Scheduling (needed by PipelineOrchestrator for initialization)
 apscheduler==3.10.4
+
+# Cloud SQL connectivity (handles auth and connection pooling for Cloud Functions)
+cloud-sql-python-connector==1.4.3

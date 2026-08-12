@@ -1,6 +1,8 @@
 """
 Postgres connection and session management for Smart Money Pipeline.
 Handles connection pooling and transaction management.
+
+Supports both direct connections and Cloud SQL Python Connector (for Cloud Functions).
 """
 
 import os
@@ -17,6 +19,42 @@ logger = logging.getLogger(__name__)
 
 # Connection pool (module-level singleton)
 _connection_pool: Optional[pool.SimpleConnectionPool] = None
+_cloud_sql_connector = None
+
+
+def _create_cloud_sql_connection():
+    """
+    Create a connection using Cloud SQL Python Connector.
+    Used when running in Cloud Functions.
+    """
+    try:
+        from cloud_sql_python_connector import Connector
+    except ImportError:
+        logger.debug("cloud-sql-python-connector not available, using direct connection")
+        return None
+
+    try:
+        instance_connection_name = os.getenv("CLOUD_SQL_CONNECTION_NAME")
+        if not instance_connection_name:
+            logger.debug("CLOUD_SQL_CONNECTION_NAME not set, using direct connection")
+            return None
+
+        connector = Connector()
+
+        def getconn():
+            return connector.connect(
+                instance_connection_name,
+                "psycopg2",
+                user=os.getenv("DATABASE_USER"),
+                password=os.getenv("DATABASE_PASSWORD"),
+                db=os.getenv("DATABASE_NAME"),
+            )
+
+        logger.info(f"Using Cloud SQL Connector for {instance_connection_name}")
+        return getconn
+    except Exception as e:
+        logger.warning(f"Failed to set up Cloud SQL Connector: {e}, falling back to direct connection")
+        return None
 
 
 def initialize_pool(
@@ -44,6 +82,21 @@ def initialize_pool(
     """
     global _connection_pool
 
+    # Try Cloud SQL Connector first (for Cloud Functions)
+    cloud_sql_getconn = _create_cloud_sql_connection()
+    if cloud_sql_getconn:
+        try:
+            _connection_pool = pool.SimpleConnectionPool(
+                minconn,
+                maxconn,
+                connection_factory=cloud_sql_getconn,
+            )
+            logger.info(f"Connection pool initialized via Cloud SQL Connector (min={minconn}, max={maxconn})")
+            return
+        except Exception as e:
+            logger.warning(f"Cloud SQL Connector pool creation failed: {e}, falling back to direct connection")
+
+    # Fall back to direct connection (for local development)
     # Use provided values or fall back to environment variables
     host = host or os.getenv("DATABASE_HOST")
     port = port or int(os.getenv("DATABASE_PORT", "5432"))
@@ -54,7 +107,8 @@ def initialize_pool(
     if not all([host, database, user, password]):
         raise ValueError(
             "Missing database configuration. Set DATABASE_HOST, DATABASE_NAME, "
-            "DATABASE_USER, and DATABASE_PASSWORD environment variables."
+            "DATABASE_USER, and DATABASE_PASSWORD environment variables, or "
+            "CLOUD_SQL_CONNECTION_NAME for Cloud SQL Connector."
         )
 
     try:
