@@ -1,1 +1,1 @@
-web: python -m smart_money_pipeline.main
+web: python run.py
