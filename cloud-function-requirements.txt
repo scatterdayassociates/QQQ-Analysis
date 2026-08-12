@@ -1,7 +1,7 @@
 # Cloud Function dependencies (lightweight)
-# No FastAPI/uvicorn needed - Cloud Functions handles HTTP
+# No FastAPI/uvicorn/gunicorn needed - Cloud Functions handles HTTP
 
-# Core dependencies
+# Core dependencies (compatible with functions-framework 3.10+)
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 requests==2.31.0
@@ -14,3 +14,5 @@ pandas==2.0.3
 
 # Logging and utilities
 google-cloud-logging==3.5.0
+
+# Functions framework will provide: starlette>=1.0.1 and gunicorn>=22.0.0
