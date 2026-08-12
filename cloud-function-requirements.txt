@@ -1,0 +1,16 @@
+# Cloud Function dependencies (lightweight)
+# No FastAPI/uvicorn needed - Cloud Functions handles HTTP
+
+# Core dependencies
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+requests==2.31.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Data processing
+numpy==1.24.3
+pandas==2.0.3
+
+# Logging and utilities
+google-cloud-logging==3.5.0
