@@ -9,7 +9,7 @@ from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.jobs import Job
+from apscheduler.job import Job
 
 from smart_money_pipeline.pipeline.orchestrator import PipelineOrchestrator
 
