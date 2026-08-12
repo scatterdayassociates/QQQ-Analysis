@@ -12,7 +12,7 @@ Implements all 6 scoring sub-functions and composite score calculation:
 Optimized with query caching and data freshness checks.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
 import statistics
