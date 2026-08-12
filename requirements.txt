@@ -1,6 +1,6 @@
 # Smart Money Pipeline - Cloud Functions compatible
-# Removed: fastapi, uvicorn, gunicorn, apscheduler
-# (Cloud Functions provides HTTP server; scheduler handled by Cloud Scheduler)
+# Removed: fastapi, uvicorn, gunicorn (Cloud Functions provides HTTP server)
+# Kept: apscheduler (PipelineOrchestrator needs it for initialization)
 
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
