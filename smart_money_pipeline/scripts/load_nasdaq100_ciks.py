@@ -85,7 +85,6 @@ NASDAQ100_DATA = {
     "SIRI": ("0001369365", "Sirius XM Holdings Inc."),
     "PCAR": ("0000075362", "PACCAR Inc"),
     "CHTR": ("0001091667", "Charter Communications, Inc."),
-    "CPRT": ("00001055971", "Carpetright Limited"),  # May need verification
     "MRNA": ("0001583869", "Moderna, Inc."),
     "DDOG": ("0001618481", "Datadog, Inc."),
     "ADSK": ("0000769397", "Autodesk, Inc."),
