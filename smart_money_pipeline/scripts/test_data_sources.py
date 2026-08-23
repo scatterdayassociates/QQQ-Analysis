@@ -62,8 +62,8 @@ def test_cot():
     try:
         from smart_money_pipeline.data_sources.cftc_cot import get_nq_cot_data
 
-        logger.info("\n1. Fetching COT data for NQ...")
-        cot_data = get_nq_cot_data(weeks=4)
+        logger.info("\n1. Fetching COT data for NQ (52 weeks)...")
+        cot_data = get_nq_cot_data(weeks=52)
         logger.info(f"   Result: {len(cot_data)} records found")
         if cot_data:
             logger.info(f"   Sample: {cot_data[0]}")
