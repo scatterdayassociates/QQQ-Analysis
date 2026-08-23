@@ -115,7 +115,7 @@ NASDAQ100_DATA = {
     "JBHT": ("0001022107", "J.B. Hunt Transport Services, Inc."),
     "MNST": ("0000865752", "Monster Beverage Corporation"),
     "OKTA": ("0001660699", "Okta, Inc."),
-    "OMCL": ("0000795877", "Omnicell, Inc.")
+    "OMCL": ("0000795877", "Omnicell, Inc."),
     "SMCI": ("0001043622", "Super Micro Computer, Inc."),
     "SWKS": ("0000729900", "Skyworks Solutions, Inc."),
     "TEDU": ("0001676915", "Tarena International Inc."),
