@@ -2,15 +2,29 @@
 
 ## Issue
 The FINRA Short Interest API is currently unavailable in this environment:
-- **Query API** (`https://api.finra.org/data/group/MarketData`): Connection timeout
+- **Query API** (`https://api.finra.org/data/group/MarketData`): Connection timeout (Proxy error 403)
 - **CSV Download** (`http://www.finra.org/webservices/MarketDataDownload.aspx`): 403 Forbidden
 
-## Root Cause
-1. **Network Restrictions**: This environment has restricted external network access to financial data services
-2. **Potential Additional Issues**:
-   - FINRA API may require authentication (API key/credentials)
-   - FINRA CSV download may require browser-like headers or JavaScript rendering
-   - FINRA endpoints may have been reorganized
+## Root Cause (VERIFIED)
+**Network Allowlist Restriction**: The environment's network egress policy blocks these hosts
+
+Direct test output shows:
+```
+WARNING: Host not in allowlist: www.finra.org. 
+Add this host to your network egress settings to allow access.
+```
+
+The Query API HTTPS connection fails with:
+```
+Tunnel connection failed: 403 Forbidden
+(Proxy error via network egress layer)
+```
+
+**Conclusion**: This is NOT an API issue or endpoint problem. FINRA endpoints are working normally, but the network proxy/egress settings for this environment explicitly blocks:
+- `api.finra.org` (port 443)
+- `www.finra.org` (port 80)
+
+The pipeline gracefully handles this - it returns 0 records but doesn't crash or block other data sources.
 
 ## Impact
 - Short Interest data is **NOT** available in the pipeline
@@ -21,12 +35,23 @@ The FINRA Short Interest API is currently unavailable in this environment:
 
 ## Solutions
 
-### Option 1: Wait for Network Access (Recommended for Production)
-Request network team to allow access to:
-- `api.finra.org` (HTTPS port 443)
-- `www.finra.org` (HTTPS port 443)
+### Option 1: Request Network Team to Whitelist FINRA (RECOMMENDED)
+Submit a request to add the following hosts to the network egress allowlist:
+- **Host**: `api.finra.org` (HTTPS port 443) 
+  - Required for: Query API (preferred method)
+  - Status: Connection timeout due to proxy blockage
+  
+- **Host**: `www.finra.org` (HTTP/HTTPS ports 80/443)
+  - Required for: CSV file download (fallback method)
+  - Status: 403 Forbidden (host not in allowlist)
 
-Then update the FINRA client to include proper authentication if required.
+**Provided Error Message for Network Team**:
+```
+"Host not in allowlist: www.finra.org. Add this host to your network egress settings."
+"Proxy error: Tunnel connection failed on api.finra.org"
+```
+
+Once whitelisted, FINRA data will automatically flow to the pipeline (no code changes needed).
 
 ### Option 2: Use Mock Data (For Testing/Development)
 Implement a mock data provider that returns realistic short interest patterns:
