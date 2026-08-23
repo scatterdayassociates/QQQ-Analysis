@@ -22,27 +22,20 @@ cd ~/QQQ-Analysis
 ## STEP 2: Set Environment Variables
 
 ```bash
-export DATABASE_HOST=1.2.3.4
+export DATABASE_HOST=35.192.68.127
 export DATABASE_PORT=5432
 export DATABASE_NAME=smart_money
-export DATABASE_USER=cloudsql_user
-export DATABASE_PASSWORD=your_password_here
+export DATABASE_USER=pipeline_user
+export DATABASE_PASSWORD='PipelinePassP2024Secure'
 export DATABASE_SSL_MODE=require
 ```
 
-**❗ REPLACE THESE VALUES:**
-- `1.2.3.4` → Your Cloud SQL public IP (find in Cloud Console)
-- `your_password_here` → Your Cloud SQL user password
-
-**To find Cloud SQL IP:**
-```bash
-gcloud sql instances describe smart-money-db --format="value(ipAddresses[0].ipAddress)"
-```
-
-**Expected Output:**
-```
-1.2.3.4
-```
+**Values Set:**
+- Host: `35.192.68.127` ✓
+- Port: `5432` ✓
+- Database: `smart_money` ✓
+- User: `pipeline_user` ✓
+- Password: `PipelinePassP2024Secure` ✓
 
 ---
 
@@ -58,8 +51,8 @@ echo "Port: $DATABASE_PORT"
 **Expected Output:**
 ```
 Database: smart_money
-Host: 1.2.3.4
-User: cloudsql_user
+Host: 35.192.68.127
+User: pipeline_user
 Port: 5432
 ```
 
@@ -85,11 +78,11 @@ python -c "
 import psycopg2
 try:
     conn = psycopg2.connect(
-        host='$DATABASE_HOST',
-        port=$DATABASE_PORT,
-        database='$DATABASE_NAME',
-        user='$DATABASE_USER',
-        password='$DATABASE_PASSWORD',
+        host='35.192.68.127',
+        port=5432,
+        database='smart_money',
+        user='pipeline_user',
+        password='PipelinePassP2024Secure',
         sslmode='require'
     )
     cursor = conn.cursor()
@@ -108,9 +101,10 @@ except Exception as e:
 ```
 
 **If it fails:**
-- Check Cloud SQL public IP is correct
+- Verify IP is correct: `35.192.68.127`
+- Verify user: `pipeline_user`
+- Verify password: `PipelinePassP2024Secure`
 - Check firewall allows your IP
-- Verify credentials are correct
 
 ---
 
@@ -863,7 +857,7 @@ gcloud scheduler jobs describe smart_money_trigger --format=json
 ### If Scores Not Computed
 ```bash
 # Check scoring table exists
-gcloud sql connect smart-money-db --user=cloudsql_user
+gcloud sql connect qqq-analysis-db --user=pipeline_user
 SELECT * FROM smart_money_scores LIMIT 1;
 ```
 
