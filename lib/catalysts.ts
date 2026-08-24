@@ -29,6 +29,51 @@
 
 import { getCustomBars, getTickerMarketCap } from "./massive";
 
+// Retry helper with exponential backoff for flaky API calls
+async function fetchWithRetry(
+  url: string,
+  maxRetries: number = 3,
+  initialDelayMs: number = 500
+): Promise<Response | null> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, { next: { revalidate: 3600 } });
+      // Retry on transient errors: network timeouts, 429 (rate limit), 5xx server errors
+      if (res.ok || res.status === 404 || res.status === 400 || res.status === 401 || res.status === 403) {
+        // Success or permanent client error — don't retry
+        return res;
+      }
+      if (res.status === 429 || res.status >= 500) {
+        // Rate limited or server error — retry this
+        lastError = new Error(`HTTP ${res.status}`);
+        if (attempt < maxRetries - 1) {
+          const delayMs = initialDelayMs * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        return res;
+      }
+      return res;
+    } catch (err) {
+      // Network error (timeout, connection refused, etc.) — retry
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries - 1) {
+        const delayMs = initialDelayMs * Math.pow(2, attempt);
+        console.error(
+          `[catalysts] Fetch attempt ${attempt + 1}/${maxRetries} failed, retrying in ${delayMs}ms: ${lastError.message}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+    }
+  }
+
+  console.error(`[catalysts] Fetch failed after ${maxRetries} attempts: ${lastError?.message}`);
+  return null;
+}
+
 // Minimal CSV row parser respecting quoted fields (Alpha Vantage quotes any
 // company name containing a comma, e.g. "AutoNation, Inc."), since a naive
 // split(",") would misalign columns for those rows.
@@ -98,7 +143,14 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
     url.searchParams.set("function", "EARNINGS_CALENDAR");
     url.searchParams.set("horizon", horizon);
     url.searchParams.set("apikey", apiKey);
-    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+
+    // Use retry helper for resilience against transient failures
+    const res = await fetchWithRetry(url.toString(), 3, 500);
+    if (!res) {
+      console.error("[catalysts] Alpha Vantage earnings request failed after retries (network error)");
+      return new Map();
+    }
+
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`[catalysts] Alpha Vantage earnings request failed: ${res.status} ${body.slice(0, 300)}`);
