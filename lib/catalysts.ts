@@ -11,18 +11,12 @@
 //     real-time.
 //   - Historical reactions cover both macro events (FOMC, CPI, Jobs
 //     Report) and each top-10 ticker's own historical earnings dates —
-//     see getHistoricalEarningsDatesByTicker below (Alpha Vantage's
-//     EARNINGS endpoint, a different one from EARNINGS_CALENDAR, and the
-//     only one of the three sources considered with genuine multi-year
-//     historical report dates). Benzinga (NOT_AUTHORIZED on this account's
-//     plan, and a paid $99/mo add-on regardless) and Finnhub (its free
-//     tier's historical calendar only reaches back ~1 month, confirmed
-//     live) were both ruled out for this specific need — Finnhub is still
-//     used for Overnight Gap's historical earnings tags (see
-//     lib/overnightGap.ts) since that feature needs the before-open/
-//     after-close timing this file's Alpha Vantage sources don't provide,
-//     and a ~1-month window is less of a gap there than it would be for a
-//     "Jan 2026–present" reactions table.
+//     now with BMO/AMC timing awareness via Finnhub (see
+//     getHistoricalEarningsWithTiming below). Before-open earnings
+//     (BMO) are measured close(T) / close(T-1) on the report date;
+//     after-close earnings (AMC) are measured close(T+1) / close(T)
+//     on the next trading day. Unknown timing defaults to AMC
+//     (conservative, captures full reaction window).
 //   - Upcoming Catalysts includes each top-10 ticker's next scheduled
 //     earnings date, pulled live from Alpha Vantage's free EARNINGS_CALENDAR
 //     endpoint (see getUpcomingEarningsMap below) — a real-time lookup, not
@@ -30,7 +24,8 @@
 //
 // This file must only ever be imported from server code: it reads equity
 // data through lib/massive.ts (secret MASSIVE_API_KEY) and, for upcoming
-// earnings, reads the secret ALPHA_VANTAGE_API_KEY directly.
+// earnings and historical earnings timing, reads the secret ALPHA_VANTAGE_API_KEY
+// and FINNHUB_API_KEY directly.
 
 import { getCustomBars, getTickerMarketCap } from "./massive";
 
@@ -215,6 +210,63 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
   return result;
 }
 
+interface FinnhubEarningsEntry {
+  date?: string;
+  symbol?: string;
+  hour?: string; // "bmo" | "amc" | "dmh" | ""
+}
+
+interface FinnhubEarningsCalendarResponse {
+  earningsCalendar?: FinnhubEarningsEntry[];
+}
+
+/**
+ * Fetches historical earnings timing (BMO/AMC) from Finnhub for a date range.
+ * Returns a map: ticker -> date -> hour ("bmo"/"amc"/"dmh"/"").
+ * Free tier typically returns trailing month of data; earlier dates will be
+ * empty/missing. Missing entries default to "amc" (after-close) for
+ * conservative reaction window measurement.
+ */
+async function getHistoricalEarningsWithTiming(tickers: string[], from: string, to: string): Promise<Map<string, Map<string, string>>> {
+  const result = new Map<string, Map<string, string>>();
+  const rawKey = process.env.FINNHUB_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    console.error("[catalysts] FINNHUB_API_KEY is not set — earnings timing unavailable, defaulting to AMC.");
+    return result;
+  }
+
+  try {
+    const url = new URL("https://finnhub.io/api/v1/calendar/earnings");
+    url.searchParams.set("from", from);
+    url.searchParams.set("to", to);
+    url.searchParams.set("token", apiKey);
+    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[catalysts] Finnhub historical earnings request failed: ${res.status} ${body.slice(0, 300)}`);
+      return result;
+    }
+
+    const data = (await res.json()) as FinnhubEarningsCalendarResponse;
+    const wanted = new Set(tickers);
+
+    for (const entry of data.earningsCalendar ?? []) {
+      if (!entry.symbol || !entry.date || !wanted.has(entry.symbol)) continue;
+      if (!result.has(entry.symbol)) result.set(entry.symbol, new Map());
+      result.get(entry.symbol)!.set(entry.date, (entry.hour ?? "").trim().toLowerCase());
+    }
+
+    console.error(
+      `[catalysts] Finnhub earnings timing: ${result.size}/${tickers.length} tracked tickers have BMO/AMC data.`
+    );
+    return result;
+  } catch (err) {
+    console.error(`[catalysts] Finnhub historical earnings lookup threw: ${err instanceof Error ? err.message : String(err)}`);
+    return result;
+  }
+}
+
 interface AlphaVantageOverviewResponse {
   EVToEBITDA?: string;
   Information?: string;
@@ -386,7 +438,7 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  const [barsByTicker, marketCaps, evToEbitdaByTicker, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
+  const [barsByTicker, marketCaps, evToEbitdaByTicker, upcomingEarningsByTicker, historicalEarningsByTicker, earningsTimingByTicker] = await Promise.all([
     Promise.all(
       TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
     ),
@@ -394,6 +446,7 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
     getEvToEbitdaByTicker(tickers),
     getUpcomingEarningsMap(tickers, "3month"),
     getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr),
+    getHistoricalEarningsWithTiming(tickers, toDateStr(from), todayStr),
   ]);
 
   const oneDayMs = 24 * 60 * 60 * 1000;
@@ -451,12 +504,31 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   for (const c of TOP_10) {
     const earningsDates = historicalEarningsByTicker.get(c.ticker) ?? [];
     const dates = sortedDatesByTicker[c.ticker];
+    const timingByDate = earningsTimingByTicker.get(c.ticker) ?? new Map();
     for (const eDate of earningsDates) {
       if (eDate > todayStr) continue; // future reports are "upcoming", handled above
       const idx = dates.indexOf(eDate);
       if (idx <= 0) continue; // no bar that day, or no prior trading day to compare against
-      const eventClose = closesByTicker[c.ticker].get(dates[idx])!;
-      const priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
+
+      // Get earnings timing (BMO/AMC); default to AMC for unknown timing (conservative)
+      const hour = timingByDate.get(eDate) ?? "";
+      const isBmo = hour.toLowerCase() === "bmo";
+
+      let eventClose: number;
+      let priorClose: number;
+
+      if (isBmo) {
+        // Before-market-open: measure close(T) vs close(T-1) on the earnings date
+        eventClose = closesByTicker[c.ticker].get(dates[idx])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
+      } else {
+        // After-market-close or unknown timing (default to AMC): measure close(T+1) vs close(T)
+        // This captures the market's reaction to news released after hours
+        if (idx >= dates.length - 1) continue; // no next trading day to compare against
+        eventClose = closesByTicker[c.ticker].get(dates[idx + 1])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx])!;
+      }
+
       reactions.push({
         ticker: c.ticker,
         eventType: "Earnings",
