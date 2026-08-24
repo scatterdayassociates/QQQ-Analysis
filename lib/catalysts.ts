@@ -134,9 +134,13 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
   if (!apiKey) {
-    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping earnings lookup.");
+    console.error(
+      `[catalysts] ALPHA_VANTAGE_API_KEY not configured. rawKey exists: ${!!rawKey}, length: ${rawKey?.length || 0}`
+    );
     return new Map();
   }
+  console.error(`[catalysts] Using ALPHA_VANTAGE_API_KEY (length: ${apiKey.length})`);
+
 
   try {
     const url = new URL("https://www.alphavantage.co/query");
@@ -158,6 +162,8 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
     }
 
     const csvText = await res.text();
+    console.error(`[catalysts] Alpha Vantage raw response length: ${csvText.length}, first 200 chars: ${csvText.slice(0, 200)}`);
+
     // Alpha Vantage returns a 200 with a plain-text "Information"/rate-limit
     // notice (no CSV header) when a key is invalid or the daily quota is
     // exhausted — detect that rather than trying to parse it as CSV rows.
@@ -178,7 +184,7 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
       if (!existing || reportDate < existing) earliestByTicker.set(symbol, reportDate);
     }
     console.error(
-      `[catalysts] Alpha Vantage returned ${lines.length - 1} total rows, ${earliestByTicker.size} matched top-10 tickers.`
+      `[catalysts] Alpha Vantage: ${lines.length - 1} rows parsed, ${earliestByTicker.size}/${tickers.length} matched tickers.`
     );
     return earliestByTicker;
   } catch (err) {
