@@ -504,29 +504,35 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   for (const c of TOP_10) {
     const earningsDates = historicalEarningsByTicker.get(c.ticker) ?? [];
     const dates = sortedDatesByTicker[c.ticker];
-    const timingByDate = earningsTimingByTicker.get(c.ticker) ?? new Map();
+    const timingByDate = earningsTimingByTicker.get(c.ticker);
+    const hasTimingData = timingByDate && timingByDate.size > 0; // true only if Finnhub fetch succeeded
     for (const eDate of earningsDates) {
       if (eDate > todayStr) continue; // future reports are "upcoming", handled above
       const idx = dates.indexOf(eDate);
       if (idx <= 0) continue; // no bar that day, or no prior trading day to compare against
 
-      // Get earnings timing (BMO/AMC); default to AMC for unknown timing (conservative)
-      const hour = timingByDate.get(eDate) ?? "";
-      const isBmo = hour.toLowerCase() === "bmo";
+      // Get earnings timing (BMO/AMC); only use if Finnhub data is available
+      const hour = timingByDate?.get(eDate) ?? "";
+      // Only treat as BMO if we have explicit Finnhub timing confirming it
+      const isBmo = hasTimingData && hour.toLowerCase() === "bmo";
 
       let eventClose: number;
       let priorClose: number;
 
       if (isBmo) {
-        // Before-market-open: measure close(T) vs close(T-1) on the earnings date
+        // Before-market-open (explicit Finnhub data): measure close(T) vs close(T-1) on the earnings date
         eventClose = closesByTicker[c.ticker].get(dates[idx])!;
         priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
-      } else {
-        // After-market-close or unknown timing (default to AMC): measure close(T+1) vs close(T)
-        // This captures the market's reaction to news released after hours
+      } else if (hasTimingData && hour.toLowerCase() === "amc") {
+        // After-market-close (explicit Finnhub data): measure close(T+1) vs close(T) on next day
         if (idx >= dates.length - 1) continue; // no next trading day to compare against
         eventClose = closesByTicker[c.ticker].get(dates[idx + 1])!;
         priorClose = closesByTicker[c.ticker].get(dates[idx])!;
+      } else {
+        // No Finnhub timing data available (API key missing or feature disabled):
+        // Fall back to original BMO logic — conservative assumption that most earnings are before/during market hours
+        eventClose = closesByTicker[c.ticker].get(dates[idx])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
       }
 
       reactions.push({
