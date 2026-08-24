@@ -39,7 +39,9 @@ async function fetchWithRetry(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      console.error(`[catalysts] Fetch attempt ${attempt + 1}/${maxRetries}: calling ${url.split("?")[0]}`);
       const res = await fetch(url, { next: { revalidate: 3600 } });
+      console.error(`[catalysts] Fetch attempt ${attempt + 1} got HTTP ${res.status}`);
       // Retry on transient errors: network timeouts, 429 (rate limit), 5xx server errors
       if (res.ok || res.status === 404 || res.status === 400 || res.status === 401 || res.status === 403) {
         // Success or permanent client error — don't retry
@@ -50,6 +52,7 @@ async function fetchWithRetry(
         lastError = new Error(`HTTP ${res.status}`);
         if (attempt < maxRetries - 1) {
           const delayMs = initialDelayMs * Math.pow(2, attempt);
+          console.error(`[catalysts] HTTP ${res.status}, retrying in ${delayMs}ms...`);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
@@ -62,7 +65,7 @@ async function fetchWithRetry(
       if (attempt < maxRetries - 1) {
         const delayMs = initialDelayMs * Math.pow(2, attempt);
         console.error(
-          `[catalysts] Fetch attempt ${attempt + 1}/${maxRetries} failed, retrying in ${delayMs}ms: ${lastError.message}`
+          `[catalysts] Fetch attempt ${attempt + 1}/${maxRetries} threw, retrying in ${delayMs}ms: ${lastError.message}`
         );
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
