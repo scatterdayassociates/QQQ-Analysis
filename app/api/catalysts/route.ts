@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCatalystTrackerData } from "@/lib/catalysts";
 
-export const revalidate = 3600; // daily/positional data, not intraday
+export const revalidate = 10; // temporarily reduced for debugging earnings lookup
 
 export async function GET() {
   try {
