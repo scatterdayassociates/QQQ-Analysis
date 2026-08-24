@@ -638,9 +638,10 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
         priorClose = closesByTicker[c.ticker].get(dates[idx])!;
       } else {
         // No Finnhub timing data available (API key missing or feature disabled):
-        // Fall back to original BMO logic — conservative assumption that most earnings are before/during market hours
-        eventClose = closesByTicker[c.ticker].get(dates[idx])!;
-        priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
+        // Default to AMC (after-market-close) — conservative assumption that captures full reaction window
+        if (idx >= dates.length - 1) continue; // no next trading day to compare against
+        eventClose = closesByTicker[c.ticker].get(dates[idx + 1])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx])!;
       }
 
       reactions.push({
