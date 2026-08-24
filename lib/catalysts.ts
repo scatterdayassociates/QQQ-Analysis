@@ -77,6 +77,28 @@ async function fetchWithRetry(
   return null;
 }
 
+// Sequential execution with throttling to avoid burst pattern detection.
+// Executes async operations one at a time with configurable delay between each.
+// Replaces Promise.all() for API calls where burst pattern is a risk.
+async function executeSequentially<T, R>(
+  items: T[],
+  asyncFn: (item: T) => Promise<R>,
+  delayMs: number = 1000
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const result = await asyncFn(item);
+    results.push(result);
+    // Add throttle delay between requests (not after the last one)
+    if (i < items.length - 1) {
+      console.error(`[catalysts] Throttling: ${delayMs}ms before next request`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return results;
+}
+
 // Minimal CSV row parser respecting quoted fields (Alpha Vantage quotes any
 // company name containing a comma, e.g. "AutoNation, Inc."), since a naive
 // split(",") would misalign columns for those rows.
@@ -235,8 +257,10 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
     return result;
   }
 
-  await Promise.all(
-    tickers.map(async (ticker) => {
+  // Execute requests sequentially with throttling to avoid burst pattern detection
+  await executeSequentially(
+    tickers,
+    async (ticker) => {
       try {
         const url = new URL("https://www.alphavantage.co/query");
         url.searchParams.set("function", "EARNINGS");
@@ -261,7 +285,8 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
       } catch (err) {
         console.error(`[catalysts] Alpha Vantage EARNINGS lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    })
+    },
+    1000  // 1 second delay between each ticker request
   );
 
   const totalDates = [...result.values()].reduce((sum, d) => sum + d.length, 0);
@@ -357,8 +382,10 @@ async function getEvToEbitdaByTicker(tickers: string[]): Promise<Map<string, num
     return result;
   }
 
-  await Promise.all(
-    tickers.map(async (ticker) => {
+  // Execute requests sequentially with throttling to avoid burst pattern detection
+  await executeSequentially(
+    tickers,
+    async (ticker) => {
       try {
         const url = new URL("https://www.alphavantage.co/query");
         url.searchParams.set("function", "OVERVIEW");
@@ -381,7 +408,8 @@ async function getEvToEbitdaByTicker(tickers: string[]): Promise<Map<string, num
       } catch (err) {
         console.error(`[catalysts] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    })
+    },
+    1000  // 1 second delay between each ticker request
   );
 
   console.error(`[catalysts] Alpha Vantage EV/EBITDA: ${result.size}/${tickers.length} tickers returned a value.`);
@@ -499,16 +527,35 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  const [barsByTicker, marketCaps, evToEbitdaByTicker, upcomingEarningsByTicker, historicalEarningsByTicker, earningsTimingByTicker] = await Promise.all([
-    Promise.all(
-      TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
-    ),
-    Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
-    getEvToEbitdaByTicker(tickers),
-    getUpcomingEarningsMap(tickers, "3month"),
-    getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr),
-    getHistoricalEarningsWithTiming(tickers, toDateStr(from), todayStr),
-  ]);
+  // Execute all data fetching sequentially to avoid burst pattern rate limit detection.
+  // Alpha Vantage free tier allows ~5 req/sec; sequential execution spaces them out.
+  console.error("[catalysts] Starting sequential data fetch (this may take 30+ seconds)...");
+
+  const barsByTicker = await executeSequentially(
+    TOP_10,
+    (c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }),
+    1000  // 1 second between bar requests
+  );
+
+  const marketCaps = await executeSequentially(
+    TOP_10,
+    (c) => getTickerMarketCap(c.ticker),
+    1000  // 1 second between market cap requests
+  );
+
+  const evToEbitdaByTicker = await getEvToEbitdaByTicker(tickers);
+  // ^ already sequential internally with 1s delays
+
+  const upcomingEarningsByTicker = await getUpcomingEarningsMap(tickers, "3month");
+  // ^ single call, no parallelism
+
+  const historicalEarningsByTicker = await getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr);
+  // ^ already sequential internally with 1s delays
+
+  const earningsTimingByTicker = await getHistoricalEarningsWithTiming(tickers, toDateStr(from), todayStr);
+  // ^ single call, no parallelism
+
+  console.error("[catalysts] Sequential data fetch complete.");
 
   const oneDayMs = 24 * 60 * 60 * 1000;
   const todayMidnightUtc = new Date(`${todayStr}T00:00:00Z`).getTime();
