@@ -512,9 +512,16 @@ export interface CatalystTrackerData {
   components: CatalystComponent[];
   reactions: CatalystReaction[];
   upcoming: UpcomingCatalyst[];
+  rateLimitError?: string; // Set if burst pattern detected; UI shows warning but keeps data
+  isStaleCache?: boolean; // True if data is from previous 24-hour cache due to rate limiting
 }
 
 const EARNINGS_LOOKAHEAD_DAYS = 90; // covers the next quarterly reporting cycle for all 10 tickers
+
+// Global cache for successful catalyst data (survives for 24 hours)
+let cachedData: CatalystTrackerData | null = null;
+let cacheTime: number = 0;
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   const today = new Date();
@@ -527,35 +534,36 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  // Execute all data fetching sequentially to avoid burst pattern rate limit detection.
-  // Alpha Vantage free tier allows ~5 req/sec; sequential execution spaces them out.
-  console.error("[catalysts] Starting sequential data fetch (this may take 30+ seconds)...");
+  try {
+    // Execute all data fetching sequentially to avoid burst pattern rate limit detection.
+    // Alpha Vantage free tier allows ~5 req/sec; sequential execution spaces them out.
+    console.error("[catalysts] Starting sequential data fetch (this may take 30+ seconds)...");
 
-  const barsByTicker = await executeSequentially(
-    TOP_10,
-    (c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }),
-    1000  // 1 second between bar requests
-  );
+    const barsByTicker = await executeSequentially(
+      TOP_10,
+      (c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }),
+      1000  // 1 second between bar requests
+    );
 
-  const marketCaps = await executeSequentially(
-    TOP_10,
-    (c) => getTickerMarketCap(c.ticker),
-    1000  // 1 second between market cap requests
-  );
+    const marketCaps = await executeSequentially(
+      TOP_10,
+      (c) => getTickerMarketCap(c.ticker),
+      1000  // 1 second between market cap requests
+    );
 
-  const evToEbitdaByTicker = await getEvToEbitdaByTicker(tickers);
-  // ^ already sequential internally with 1s delays
+    const evToEbitdaByTicker = await getEvToEbitdaByTicker(tickers);
+    // ^ already sequential internally with 1s delays
 
-  const upcomingEarningsByTicker = await getUpcomingEarningsMap(tickers, "3month");
-  // ^ single call, no parallelism
+    const upcomingEarningsByTicker = await getUpcomingEarningsMap(tickers, "3month");
+    // ^ single call, no parallelism
 
-  const historicalEarningsByTicker = await getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr);
-  // ^ already sequential internally with 1s delays
+    const historicalEarningsByTicker = await getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr);
+    // ^ already sequential internally with 1s delays
 
-  const earningsTimingByTicker = await getHistoricalEarningsWithTiming(tickers, toDateStr(from), todayStr);
-  // ^ single call, no parallelism
+    const earningsTimingByTicker = await getHistoricalEarningsWithTiming(tickers, toDateStr(from), todayStr);
+    // ^ single call, no parallelism
 
-  console.error("[catalysts] Sequential data fetch complete.");
+    console.error("[catalysts] Sequential data fetch complete.");
 
   const oneDayMs = 24 * 60 * 60 * 1000;
   const todayMidnightUtc = new Date(`${todayStr}T00:00:00Z`).getTime();
@@ -678,9 +686,54 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
     }
   });
 
-  const upcoming: UpcomingCatalyst[] = [...macroUpcoming, ...earningsUpcoming].sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
-  );
+    const upcoming: UpcomingCatalyst[] = [...macroUpcoming, ...earningsUpcoming].sort((a, b) =>
+      a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+    );
 
-  return { asOf: todayStr, components, reactions, upcoming };
+    const result: CatalystTrackerData = { asOf: todayStr, components, reactions, upcoming };
+
+    // Cache successful response for 24 hours
+    cachedData = result;
+    cacheTime = Date.now();
+    console.error("[catalysts] Data cached successfully for 24-hour fallback");
+
+    return result;
+  } catch (err) {
+    // On error, check if we have cached data from past 24 hours
+    const now = Date.now();
+    const isCacheValid = cachedData && (now - cacheTime) < CACHE_DURATION;
+
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[catalysts] Error fetching data: ${errorMsg}`);
+
+    if (isCacheValid && cachedData) {
+      // Return cached data with warning flag
+      console.error("[catalysts] Returning cached data (24-hour fallback due to rate limiting)");
+      return {
+        ...cachedData,
+        rateLimitError: "API rate limited - showing cached data from past 24 hours. Data will refresh when rate limits reset.",
+        isStaleCache: true,
+      };
+    }
+
+    // No valid cache, return empty/minimal response with error
+    const emptyResponse: CatalystTrackerData = {
+      asOf: todayStr,
+      components: TOP_10.map(c => ({
+        ticker: c.ticker,
+        name: c.name,
+        price: null,
+        changePct: null,
+        volume: null,
+        marketCap: null,
+        evToEbitda: null,
+        daysUntilEarnings: null,
+      })),
+      reactions: [],
+      upcoming: [],
+      rateLimitError: "Unable to fetch data - API rate limited and no cached data available. Please try again in a few minutes.",
+    };
+
+    return emptyResponse;
+  }
 }
