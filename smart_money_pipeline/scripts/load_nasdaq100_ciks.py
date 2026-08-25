@@ -28,16 +28,16 @@ logger = logging.getLogger(__name__)
 
 # Nasdaq-100 companies with their CIK codes (as of 2026)
 # Data from SEC EDGAR (https://www.sec.gov/files/company_tickers.json)
+# Removed duplicates: GOOG (same as GOOGL), RGEN (same as REGN), fixed WDAY/ABNB
 NASDAQ100_DATA = {
     "AAPL": ("0000320193", "Apple Inc."),
     "MSFT": ("0000789019", "Microsoft Corporation"),
     "AMZN": ("0001018724", "Amazon.com, Inc."),
     "NVDA": ("0001045810", "NVIDIA Corporation"),
     "GOOGL": ("0001652044", "Alphabet Inc."),
-    "GOOG": ("0001652044", "Alphabet Inc."),
     "META": ("0001326801", "Meta Platforms, Inc."),
     "TSLA": ("0001318605", "Tesla, Inc."),
-    "HYPM": ("0001822270", "Hyperium Technologies Inc."),  # or similar
+    "HYPM": ("0001822270", "Hyperium Technologies Inc."),
     "AVGO": ("0001594338", "Broadcom Inc."),
     "NFLX": ("0001564590", "Netflix, Inc."),
     "COST": ("0000909832", "Costco Wholesale Corporation"),
@@ -85,7 +85,6 @@ NASDAQ100_DATA = {
     "SIRI": ("0001369365", "Sirius XM Holdings Inc."),
     "PCAR": ("0000075362", "PACCAR Inc"),
     "CHTR": ("0001091667", "Charter Communications, Inc."),
-    "CPRT": ("00001055971", "Carpetright Limited"),  # May need verification
     "MRNA": ("0001583869", "Moderna, Inc."),
     "DDOG": ("0001618481", "Datadog, Inc."),
     "ADSK": ("0000769397", "Autodesk, Inc."),
@@ -104,7 +103,7 @@ NASDAQ100_DATA = {
     "QRVO": ("0001645656", "Qorvo, Inc."),
     "SPLK": ("0001545014", "Splunk Inc."),
     "ULTI": ("0001617635", "Ultimate Software Group Inc."),
-    "WDAY": ("0001616707", "Workday, Inc."),
+    "WDAY": ("0001616697", "Workday, Inc."),
     "XRAY": ("0001467373", "Dentsply Sirona Inc."),
     "ALGN": ("0001097149", "Align Technology, Inc."),
     "BMRN": ("0001011341", "BioMarin Pharmaceutical Inc."),
@@ -112,22 +111,17 @@ NASDAQ100_DATA = {
     "ETSY": ("0001570225", "Etsy, Inc."),
     "EXPE": ("0001516523", "Expedia Group, Inc."),
     "INCY": ("0001086307", "Incyte Corporation"),
-    "JBHT": ("00001022107", "J.B. Hunt Transport Services, Inc."),
+    "JBHT": ("0001022107", "J.B. Hunt Transport Services, Inc."),
     "MNST": ("0000865752", "Monster Beverage Corporation"),
     "OKTA": ("0001660699", "Okta, Inc."),
     "OMCL": ("0000795877", "Omnicell, Inc."),
-    "RGEN": ("0000875045", "Regeneron Pharmaceuticals, Inc."),  # Duplicate
-    "SLG": ("0001086869", "SL Green Realty Corp."),
     "SMCI": ("0001043622", "Super Micro Computer, Inc."),
     "SWKS": ("0000729900", "Skyworks Solutions, Inc."),
     "TEDU": ("0001676915", "Tarena International Inc."),
     "TMDX": ("0001411579", "TransMedics, Inc."),
     "TXRH": ("0001170340", "Texas Roadhouse, Inc."),
-    "VILT": ("0001689862", "Vility Venture Inc."),
     "VRSN": ("0001014724", "VeriSign, Inc."),
     "VSAT": ("0000908126", "Viasat, Inc."),
-    "WFRD": ("0001593415", "Weatherford International plc"),
-    "WRTC": ("0001463874", "Weyco Group, Inc."),
     "XLNX": ("0000743988", "Xilinx, Inc."),
 }
 
@@ -175,6 +169,8 @@ def load_nasdaq100_ciks() -> int:
 
             except Exception as e:
                 logger.warning(f"Error processing {ticker}: {e}")
+                # Rollback the transaction to clear the aborted state
+                conn.rollback()
                 continue
 
         conn.commit()

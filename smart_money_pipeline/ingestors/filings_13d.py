@@ -3,7 +3,7 @@
 Fetches Schedule 13D/13D-A filings from SEC EDGAR.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import logging
 
@@ -26,6 +26,56 @@ class Filings13DIngestor(BaseIngestor):
             "remedial",
             "successor",
         ]
+
+    def _extract_cik_from_link(self, link: str) -> str:
+        """
+        Extract CIK from SEC EDGAR link.
+
+        Format: /cgi-bin/browse-edgar?action=...&CIK=XXXXXXXXX...
+        """
+        import re
+        match = re.search(r'[?&]CIK=(\d+)', link)
+        if match:
+            return match.group(1).lstrip('0') or '0'
+        return ""
+
+    def _extract_company_info(self, filing_text: str) -> Tuple[str, str]:
+        """
+        Extract company name and ticker from 13D filing text.
+
+        Returns:
+            Tuple of (company_name, ticker)
+        """
+        import re
+        from smart_money_pipeline.common.db import execute_query
+
+        company_name = ""
+        ticker = ""
+
+        try:
+            # Look for common patterns in 13D filings
+            # Pattern 1: "Company Name:" or "Company:" followed by the name
+            match = re.search(r'(?:company name|company):\s*([A-Za-z0-9\s&,.-]+?)(?:\n|<|$)', filing_text, re.IGNORECASE)
+            if match:
+                company_name = match.group(1).strip()
+
+            # Pattern 2: "CUSIP:" or ticker patterns
+            match = re.search(r'(?:ticker|symbol):\s*([A-Z]{1,5})(?:\s|,|$)', filing_text, re.IGNORECASE)
+            if match:
+                ticker = match.group(1).strip()
+
+            # If we have company name but no ticker, try to look it up
+            if company_name and not ticker:
+                # Query database for company
+                query = "SELECT ticker FROM ticker_to_cik WHERE company_name ILIKE %s LIMIT 1"
+                result = execute_query(query, (f"%{company_name}%",), fetch_one=True)
+                if result:
+                    ticker = result[0]
+
+        except Exception as e:
+            logger.debug(f"Error extracting company info from filing: {e}")
+
+        return company_name, ticker
 
     def fetch(self) -> List[Dict[str, Any]]:
         """
@@ -52,11 +102,18 @@ class Filings13DIngestor(BaseIngestor):
                 try:
                     details = sec_client.fetch_13d_details(filing.get("link", ""))
 
+                    # Extract CIK from filing link
+                    # Link format: /cgi-bin/browse-edgar?action=...&CIK=XXXXXXXXX...
+                    cik = self._extract_cik_from_link(filing.get("link", ""))
+
+                    # Extract company name and ticker from filing text
+                    company_name, ticker = self._extract_company_info(details.get("filing_text", ""))
+
                     # Parse filing data
                     record = {
-                        "cik": "",  # Would extract from filing
-                        "ticker": "",  # Would extract from filing
-                        "filer_name": "",  # Would extract from filing
+                        "cik": cik,
+                        "ticker": ticker,
+                        "filer_name": company_name,
                         "pct_owned": details.get("pct_owned", 0.0),
                         "filing_date": filing.get("date"),
                         "is_amendment": "13D-A" in filing.get("link", ""),

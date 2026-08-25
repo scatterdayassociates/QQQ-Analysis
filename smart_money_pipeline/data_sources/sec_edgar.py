@@ -289,17 +289,26 @@ class SECEdgarAPI:
                 link_match = re.search(r'href="([^"]*?)0001193125[^"]*?"', row)
 
                 if date_match and link_match:
-                    filing_date = datetime.strptime(date_match.group(1), "%Y-%m-%d")
+                    try:
+                        date_str = date_match.group(1)
+                        # Validate date format: year should be 1990-2100, month 01-12, day 01-31
+                        year, month, day = date_str.split('-')
+                        if int(year) < 1990 or int(year) > 2100 or int(month) < 1 or int(month) > 12 or int(day) < 1 or int(day) > 31:
+                            continue  # Skip invalid dates
 
-                    # Only include recent filings
-                    if filing_date >= lookback_date:
-                        filings.append(
-                            {
-                                "date": filing_date.strftime("%Y-%m-%d"),
-                                "link": link_match.group(1),
-                                "fetched_at": datetime.now().isoformat(),
-                            }
-                        )
+                        filing_date = datetime.strptime(date_str, "%Y-%m-%d")
+
+                        # Only include recent filings
+                        if filing_date >= lookback_date:
+                            filings.append(
+                                {
+                                    "date": filing_date.strftime("%Y-%m-%d"),
+                                    "link": link_match.group(1),
+                                    "fetched_at": datetime.now().isoformat(),
+                                }
+                            )
+                    except (ValueError, AttributeError):
+                        continue  # Skip malformed dates
 
         except Exception as e:
             logger.warning(f"Error parsing EDGAR HTML: {e}")
