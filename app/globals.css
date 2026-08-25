@@ -1237,3 +1237,191 @@ tbody tr.active td {
     min-width: 92px;
   }
 }
+
+/* --- 0 DTE Opportunity Analysis tab ---------------------------------- */
+
+.odte-gate-banner {
+  border-left: 4px solid var(--down);
+}
+
+.odte-gate-banner.open {
+  border-left-color: var(--up);
+}
+
+.odte-gate-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.odte-gate-state {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--down);
+}
+
+.odte-gate-banner.open .odte-gate-state {
+  color: var(--up);
+}
+
+.odte-stamp {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.odte-closed-note,
+.odte-recommendation {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+}
+
+.odte-recommendation {
+  color: var(--accent-vol);
+  font-weight: 600;
+}
+
+.odte-conditions {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.odte-cond {
+  display: grid;
+  grid-template-columns: 2.2rem 11rem 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(128, 128, 128, 0.06));
+}
+
+.odte-cond.fail {
+  background: color-mix(in srgb, var(--down) 9%, transparent);
+}
+
+.odte-cond.pass {
+  background: color-mix(in srgb, var(--up) 8%, transparent);
+}
+
+.odte-cond-id {
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.odte-cond-name {
+  font-weight: 600;
+}
+
+.odte-cond-value {
+  font-size: 0.78rem;
+}
+
+.odte-cond.fail .odte-cond-value {
+  color: var(--down);
+}
+
+.odte-cond.pass .odte-cond-value {
+  color: var(--up);
+}
+
+.odte-cond-threshold,
+.odte-cond-note {
+  color: var(--muted);
+}
+
+.odte-budget-row {
+  margin-top: 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+}
+
+.odte-basecase {
+  color: var(--down);
+  font-weight: 600;
+}
+
+.odte-row2 {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 980px) {
+  .odte-row2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.odte-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.odte-chart-window {
+  fill: var(--focus);
+  opacity: 0.08;
+}
+
+.odte-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.odte-chart-tick {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.odte-chart-label-im {
+  fill: var(--accent-qqq);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.odte-chart-label-cem {
+  fill: var(--accent-vol);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.odte-legend {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.odte-legend-im {
+  color: var(--accent-qqq);
+}
+
+.odte-legend-cem {
+  color: var(--accent-vol);
+}
+
+.odte-context-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem 1rem;
+  font-size: 0.82rem;
+  margin-top: 0.4rem;
+}
+
+.odte-context-grid > span:nth-child(odd) {
+  color: var(--muted);
+}
+
+.odte-setup-note {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.6;
+}

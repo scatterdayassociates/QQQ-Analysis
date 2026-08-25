@@ -131,6 +131,10 @@ export interface OptionContractSnapshot {
     low?: number;
     vwap?: number;
     volume?: number;
+    // Nanosecond epoch of the day-aggregate's own last update, when the API
+    // provides it — the 0DTE scanner logs this against wall clock to verify
+    // the plan's actual delay empirically (spec's "T-15 doctrine").
+    last_updated?: number;
   };
   details: {
     contract_type: "call" | "put";
@@ -184,6 +188,52 @@ export async function getOptionChainSnapshot(
   }
 
   return results;
+}
+
+interface OptionContractReference {
+  ticker: string;
+  expiration_date: string; // YYYY-MM-DD
+  strike_price: number;
+  contract_type: "call" | "put";
+}
+
+interface OptionContractsReferenceResponse {
+  results?: OptionContractReference[];
+  status?: string;
+  next_url?: string;
+}
+
+/**
+ * Options Contracts reference endpoint.
+ * GET /v3/reference/options/contracts?underlying_ticker=...
+ *
+ * Used by the 0DTE scanner at session-init to (a) confirm an expiry exists
+ * today and (b) find the nearest ~weekly expiry for the chain-derived IV term
+ * structure. Returns the sorted unique expiration dates on/after `gteDate`.
+ * One page of 1000 contracts covers several QQQ expiries; pagination follows
+ * next_url like the other list endpoints just in case.
+ */
+export async function listOptionExpirations(underlyingTicker: string, gteDate: string): Promise<string[]> {
+  let data = await massiveFetch<OptionContractsReferenceResponse>("/v3/reference/options/contracts", {
+    underlying_ticker: underlyingTicker,
+    "expiration_date.gte": gteDate,
+    sort: "expiration_date",
+    order: "asc",
+    limit: "1000",
+  });
+
+  const expirations = new Set<string>();
+  for (const c of data.results ?? []) expirations.add(c.expiration_date);
+
+  let pages = 0;
+  // A handful of pages is plenty — we only need the next few weeks of expiries.
+  while (data.next_url && pages < 3) {
+    data = await fetchJson<OptionContractsReferenceResponse>(new URL(data.next_url));
+    for (const c of data.results ?? []) expirations.add(c.expiration_date);
+    pages += 1;
+  }
+
+  return [...expirations].sort();
 }
 
 const ET_TIME_ZONE = "America/New_York";

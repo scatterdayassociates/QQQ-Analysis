@@ -7,6 +7,26 @@
     {
       "path": "/api/ai-earnings/refresh",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/odte/cron/session-init",
+      "schedule": "15 13 * * 1-5"
+    },
+    {
+      "path": "/api/odte/cron/session-init",
+      "schedule": "15 14 * * 1-5"
+    },
+    {
+      "path": "/api/odte/cron/tick",
+      "schedule": "*/2 13-21 * * 1-5"
+    },
+    {
+      "path": "/api/odte/cron/session-close",
+      "schedule": "25 20 * * 1-5"
+    },
+    {
+      "path": "/api/odte/cron/session-close",
+      "schedule": "25 21 * * 1-5"
     }
   ]
 }
