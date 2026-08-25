@@ -692,6 +692,37 @@ tbody tr.active td {
   margin-bottom: 1.1rem;
 }
 
+.warning-box {
+  border: 1px solid #6b5c2b;
+  background: #3d3a1f;
+  color: #ffd464;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  font-size: 0.85rem;
+  margin-bottom: 1.1rem;
+  line-height: 1.4;
+}
+
+.warning-box.stale-cache {
+  border-color: #5c3d3d;
+  background: #3d2a2a;
+  color: #ffa864;
+}
+
+@media (prefers-color-scheme: light) {
+  .warning-box {
+    border-color: #d4c876;
+    background: #fef8e7;
+    color: #8b7a1a;
+  }
+
+  .warning-box.stale-cache {
+    border-color: #d4a076;
+    background: #fef3e7;
+    color: #8b5a1a;
+  }
+}
+
 .skeleton {
   color: var(--muted);
   font-size: 0.85rem;

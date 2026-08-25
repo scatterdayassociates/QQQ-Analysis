@@ -96,6 +96,12 @@ export default function CatalystPanel() {
 
       {error && <div className="error-box">{error}</div>}
 
+      {data?.rateLimitError && (
+        <div className={`warning-box${data.isStaleCache ? " stale-cache" : ""}`}>
+          <strong>{data.isStaleCache ? "⚠️ Cached Data:" : "⚠️ Rate Limited:"}</strong> {data.rateLimitError}
+        </div>
+      )}
+
       {data && !error && (
         <>
           <div className="card">
