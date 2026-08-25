@@ -51,6 +51,7 @@ export default function CatalystPanel() {
   const [error, setError] = useState<string | null>(null);
   const [tickerFilter, setTickerFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [previousComponents, setPreviousComponents] = useState<CatalystTrackerData["components"] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,14 +60,32 @@ export default function CatalystPanel() {
       const res = await fetch("/api/catalysts");
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load catalyst tracker data");
-      setData(json as CatalystTrackerData);
+
+      const newData = json as CatalystTrackerData;
+
+      // If rate-limited and we have previous data, merge daysUntilEarnings from cache
+      if (newData.rateLimitError && newData.isStaleCache && previousComponents) {
+        const mergedComponents = newData.components.map((component) => {
+          const previousComponent = previousComponents.find((p) => p.ticker === component.ticker);
+          return {
+            ...component,
+            // Preserve daysUntilEarnings from previous successful fetch if current is null
+            daysUntilEarnings: component.daysUntilEarnings ?? previousComponent?.daysUntilEarnings ?? null,
+          };
+        });
+        newData.components = mergedComponents;
+      }
+
+      // Store components for next refresh
+      setPreviousComponents(newData.components);
+      setData(newData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load catalyst tracker data");
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [previousComponents]);
 
   useEffect(() => {
     load();
