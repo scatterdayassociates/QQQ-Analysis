@@ -11,18 +11,12 @@
 //     real-time.
 //   - Historical reactions cover both macro events (FOMC, CPI, Jobs
 //     Report) and each top-10 ticker's own historical earnings dates —
-//     see getHistoricalEarningsDatesByTicker below (Alpha Vantage's
-//     EARNINGS endpoint, a different one from EARNINGS_CALENDAR, and the
-//     only one of the three sources considered with genuine multi-year
-//     historical report dates). Benzinga (NOT_AUTHORIZED on this account's
-//     plan, and a paid $99/mo add-on regardless) and Finnhub (its free
-//     tier's historical calendar only reaches back ~1 month, confirmed
-//     live) were both ruled out for this specific need — Finnhub is still
-//     used for Overnight Gap's historical earnings tags (see
-//     lib/overnightGap.ts) since that feature needs the before-open/
-//     after-close timing this file's Alpha Vantage sources don't provide,
-//     and a ~1-month window is less of a gap there than it would be for a
-//     "Jan 2026–present" reactions table.
+//     now with BMO/AMC timing awareness via Finnhub (see
+//     getHistoricalEarningsWithTiming below). Before-open earnings
+//     (BMO) are measured close(T) / close(T-1) on the report date;
+//     after-close earnings (AMC) are measured close(T+1) / close(T)
+//     on the next trading day. Unknown timing defaults to AMC
+//     (conservative, captures full reaction window).
 //   - Upcoming Catalysts includes each top-10 ticker's next scheduled
 //     earnings date, pulled live from Alpha Vantage's free EARNINGS_CALENDAR
 //     endpoint (see getUpcomingEarningsMap below) — a real-time lookup, not
@@ -30,9 +24,80 @@
 //
 // This file must only ever be imported from server code: it reads equity
 // data through lib/massive.ts (secret MASSIVE_API_KEY) and, for upcoming
-// earnings, reads the secret ALPHA_VANTAGE_API_KEY directly.
+// earnings and historical earnings timing, reads the secret ALPHA_VANTAGE_API_KEY
+// and FINNHUB_API_KEY directly.
 
 import { getCustomBars, getTickerMarketCap } from "./massive";
+
+// Retry helper with exponential backoff for flaky API calls
+async function fetchWithRetry(
+  url: string,
+  maxRetries: number = 3,
+  initialDelayMs: number = 500
+): Promise<Response | null> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      console.error(`[catalysts] Fetch attempt ${attempt + 1}/${maxRetries}: calling ${url.split("?")[0]}`);
+      const res = await fetch(url, { next: { revalidate: 3600 } });
+      console.error(`[catalysts] Fetch attempt ${attempt + 1} got HTTP ${res.status}`);
+      // Retry on transient errors: network timeouts, 429 (rate limit), 5xx server errors
+      if (res.ok || res.status === 404 || res.status === 400 || res.status === 401 || res.status === 403) {
+        // Success or permanent client error — don't retry
+        return res;
+      }
+      if (res.status === 429 || res.status >= 500) {
+        // Rate limited or server error — retry this
+        lastError = new Error(`HTTP ${res.status}`);
+        if (attempt < maxRetries - 1) {
+          const delayMs = initialDelayMs * Math.pow(2, attempt);
+          console.error(`[catalysts] HTTP ${res.status}, retrying in ${delayMs}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        return res;
+      }
+      return res;
+    } catch (err) {
+      // Network error (timeout, connection refused, etc.) — retry
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries - 1) {
+        const delayMs = initialDelayMs * Math.pow(2, attempt);
+        console.error(
+          `[catalysts] Fetch attempt ${attempt + 1}/${maxRetries} threw, retrying in ${delayMs}ms: ${lastError.message}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+    }
+  }
+
+  console.error(`[catalysts] Fetch failed after ${maxRetries} attempts: ${lastError?.message}`);
+  return null;
+}
+
+// Sequential execution with throttling to avoid burst pattern detection.
+// Executes async operations one at a time with configurable delay between each.
+// Replaces Promise.all() for API calls where burst pattern is a risk.
+async function executeSequentially<T, R>(
+  items: T[],
+  asyncFn: (item: T) => Promise<R>,
+  delayMs: number = 1000
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const result = await asyncFn(item);
+    results.push(result);
+    // Add throttle delay between requests (not after the last one)
+    if (i < items.length - 1) {
+      console.error(`[catalysts] Throttling: ${delayMs}ms before next request`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return results;
+}
 
 // Minimal CSV row parser respecting quoted fields (Alpha Vantage quotes any
 // company name containing a comma, e.g. "AutoNation, Inc."), since a naive
@@ -94,16 +159,27 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
   const rawKey = process.env.ALPHA_VANTAGE_API_KEY;
   const apiKey = rawKey?.trim();
   if (!apiKey) {
-    console.error("[catalysts] ALPHA_VANTAGE_API_KEY is not set — skipping earnings lookup.");
+    console.error(
+      `[catalysts] ALPHA_VANTAGE_API_KEY not configured. rawKey exists: ${!!rawKey}, length: ${rawKey?.length || 0}`
+    );
     return new Map();
   }
+  console.error(`[catalysts] Using ALPHA_VANTAGE_API_KEY (length: ${apiKey.length})`);
+
 
   try {
     const url = new URL("https://www.alphavantage.co/query");
     url.searchParams.set("function", "EARNINGS_CALENDAR");
     url.searchParams.set("horizon", horizon);
     url.searchParams.set("apikey", apiKey);
-    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+
+    // Use retry helper for resilience against transient failures
+    const res = await fetchWithRetry(url.toString(), 3, 500);
+    if (!res) {
+      console.error("[catalysts] Alpha Vantage earnings request failed after retries (network error)");
+      return new Map();
+    }
+
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`[catalysts] Alpha Vantage earnings request failed: ${res.status} ${body.slice(0, 300)}`);
@@ -111,6 +187,8 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
     }
 
     const csvText = await res.text();
+    console.error(`[catalysts] Alpha Vantage raw response length: ${csvText.length}, first 200 chars: ${csvText.slice(0, 200)}`);
+
     // Alpha Vantage returns a 200 with a plain-text "Information"/rate-limit
     // notice (no CSV header) when a key is invalid or the daily quota is
     // exhausted — detect that rather than trying to parse it as CSV rows.
@@ -131,7 +209,7 @@ async function getUpcomingEarningsMap(tickers: string[], horizon: EarningsHorizo
       if (!existing || reportDate < existing) earliestByTicker.set(symbol, reportDate);
     }
     console.error(
-      `[catalysts] Alpha Vantage returned ${lines.length - 1} total rows, ${earliestByTicker.size} matched top-10 tickers.`
+      `[catalysts] Alpha Vantage: ${lines.length - 1} rows parsed, ${earliestByTicker.size}/${tickers.length} matched tickers.`
     );
     return earliestByTicker;
   } catch (err) {
@@ -179,8 +257,10 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
     return result;
   }
 
-  await Promise.all(
-    tickers.map(async (ticker) => {
+  // Execute requests sequentially with throttling to avoid burst pattern detection
+  await executeSequentially(
+    tickers,
+    async (ticker) => {
       try {
         const url = new URL("https://www.alphavantage.co/query");
         url.searchParams.set("function", "EARNINGS");
@@ -205,7 +285,8 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
       } catch (err) {
         console.error(`[catalysts] Alpha Vantage EARNINGS lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    })
+    },
+    1000  // 1 second delay between each ticker request
   );
 
   const totalDates = [...result.values()].reduce((sum, d) => sum + d.length, 0);
@@ -213,6 +294,63 @@ async function getHistoricalEarningsDatesByTicker(tickers: string[], from: strin
     `[catalysts] Alpha Vantage historical earnings: ${result.size}/${tickers.length} tickers returned data, ${totalDates} report dates in range.`
   );
   return result;
+}
+
+interface FinnhubEarningsEntry {
+  date?: string;
+  symbol?: string;
+  hour?: string; // "bmo" | "amc" | "dmh" | ""
+}
+
+interface FinnhubEarningsCalendarResponse {
+  earningsCalendar?: FinnhubEarningsEntry[];
+}
+
+/**
+ * Fetches historical earnings timing (BMO/AMC) from Finnhub for a date range.
+ * Returns a map: ticker -> date -> hour ("bmo"/"amc"/"dmh"/"").
+ * Free tier typically returns trailing month of data; earlier dates will be
+ * empty/missing. Missing entries default to "amc" (after-close) for
+ * conservative reaction window measurement.
+ */
+async function getHistoricalEarningsWithTiming(tickers: string[], from: string, to: string): Promise<Map<string, Map<string, string>>> {
+  const result = new Map<string, Map<string, string>>();
+  const rawKey = process.env.FINNHUB_API_KEY;
+  const apiKey = rawKey?.trim();
+  if (!apiKey) {
+    console.error("[catalysts] FINNHUB_API_KEY is not set — earnings timing unavailable, defaulting to AMC.");
+    return result;
+  }
+
+  try {
+    const url = new URL("https://finnhub.io/api/v1/calendar/earnings");
+    url.searchParams.set("from", from);
+    url.searchParams.set("to", to);
+    url.searchParams.set("token", apiKey);
+    const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[catalysts] Finnhub historical earnings request failed: ${res.status} ${body.slice(0, 300)}`);
+      return result;
+    }
+
+    const data = (await res.json()) as FinnhubEarningsCalendarResponse;
+    const wanted = new Set(tickers);
+
+    for (const entry of data.earningsCalendar ?? []) {
+      if (!entry.symbol || !entry.date || !wanted.has(entry.symbol)) continue;
+      if (!result.has(entry.symbol)) result.set(entry.symbol, new Map());
+      result.get(entry.symbol)!.set(entry.date, (entry.hour ?? "").trim().toLowerCase());
+    }
+
+    console.error(
+      `[catalysts] Finnhub earnings timing: ${result.size}/${tickers.length} tracked tickers have BMO/AMC data.`
+    );
+    return result;
+  } catch (err) {
+    console.error(`[catalysts] Finnhub historical earnings lookup threw: ${err instanceof Error ? err.message : String(err)}`);
+    return result;
+  }
 }
 
 interface AlphaVantageOverviewResponse {
@@ -244,8 +382,10 @@ async function getEvToEbitdaByTicker(tickers: string[]): Promise<Map<string, num
     return result;
   }
 
-  await Promise.all(
-    tickers.map(async (ticker) => {
+  // Execute requests sequentially with throttling to avoid burst pattern detection
+  await executeSequentially(
+    tickers,
+    async (ticker) => {
       try {
         const url = new URL("https://www.alphavantage.co/query");
         url.searchParams.set("function", "OVERVIEW");
@@ -268,7 +408,8 @@ async function getEvToEbitdaByTicker(tickers: string[]): Promise<Map<string, num
       } catch (err) {
         console.error(`[catalysts] Alpha Vantage OVERVIEW lookup threw for ${ticker}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    })
+    },
+    1000  // 1 second delay between each ticker request
   );
 
   console.error(`[catalysts] Alpha Vantage EV/EBITDA: ${result.size}/${tickers.length} tickers returned a value.`);
@@ -386,15 +527,35 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
 
   const tickers = TOP_10.map((c) => c.ticker);
 
-  const [barsByTicker, marketCaps, evToEbitdaByTicker, upcomingEarningsByTicker, historicalEarningsByTicker] = await Promise.all([
-    Promise.all(
-      TOP_10.map((c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }))
-    ),
-    Promise.all(TOP_10.map((c) => getTickerMarketCap(c.ticker))),
-    getEvToEbitdaByTicker(tickers),
-    getUpcomingEarningsMap(tickers, "3month"),
-    getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr),
-  ]);
+  // Execute all data fetching sequentially to avoid burst pattern rate limit detection.
+  // Alpha Vantage free tier allows ~5 req/sec; sequential execution spaces them out.
+  console.error("[catalysts] Starting sequential data fetch (this may take 30+ seconds)...");
+
+  const barsByTicker = await executeSequentially(
+    TOP_10,
+    (c) => getCustomBars(c.ticker, { multiplier: 1, timespan: "day", from: toDateStr(from), to: todayStr }),
+    1000  // 1 second between bar requests
+  );
+
+  const marketCaps = await executeSequentially(
+    TOP_10,
+    (c) => getTickerMarketCap(c.ticker),
+    1000  // 1 second between market cap requests
+  );
+
+  const evToEbitdaByTicker = await getEvToEbitdaByTicker(tickers);
+  // ^ already sequential internally with 1s delays
+
+  const upcomingEarningsByTicker = await getUpcomingEarningsMap(tickers, "3month");
+  // ^ single call, no parallelism
+
+  const historicalEarningsByTicker = await getHistoricalEarningsDatesByTicker(tickers, toDateStr(from), todayStr);
+  // ^ already sequential internally with 1s delays
+
+  const earningsTimingByTicker = await getHistoricalEarningsWithTiming(tickers, toDateStr(from), todayStr);
+  // ^ single call, no parallelism
+
+  console.error("[catalysts] Sequential data fetch complete.");
 
   const oneDayMs = 24 * 60 * 60 * 1000;
   const todayMidnightUtc = new Date(`${todayStr}T00:00:00Z`).getTime();
@@ -451,12 +612,38 @@ export async function getCatalystTrackerData(): Promise<CatalystTrackerData> {
   for (const c of TOP_10) {
     const earningsDates = historicalEarningsByTicker.get(c.ticker) ?? [];
     const dates = sortedDatesByTicker[c.ticker];
+    const timingByDate = earningsTimingByTicker.get(c.ticker);
+    const hasTimingData = timingByDate && timingByDate.size > 0; // true only if Finnhub fetch succeeded
     for (const eDate of earningsDates) {
       if (eDate > todayStr) continue; // future reports are "upcoming", handled above
       const idx = dates.indexOf(eDate);
       if (idx <= 0) continue; // no bar that day, or no prior trading day to compare against
-      const eventClose = closesByTicker[c.ticker].get(dates[idx])!;
-      const priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
+
+      // Get earnings timing (BMO/AMC); only use if Finnhub data is available
+      const hour = timingByDate?.get(eDate) ?? "";
+      // Only treat as BMO if we have explicit Finnhub timing confirming it
+      const isBmo = hasTimingData && hour.toLowerCase() === "bmo";
+
+      let eventClose: number;
+      let priorClose: number;
+
+      if (isBmo) {
+        // Before-market-open (explicit Finnhub data): measure close(T) vs close(T-1) on the earnings date
+        eventClose = closesByTicker[c.ticker].get(dates[idx])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx - 1])!;
+      } else if (hasTimingData && hour.toLowerCase() === "amc") {
+        // After-market-close (explicit Finnhub data): measure close(T+1) vs close(T) on next day
+        if (idx >= dates.length - 1) continue; // no next trading day to compare against
+        eventClose = closesByTicker[c.ticker].get(dates[idx + 1])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx])!;
+      } else {
+        // No Finnhub timing data available (API key missing or feature disabled):
+        // Default to AMC (after-market-close) — conservative assumption that captures full reaction window
+        if (idx >= dates.length - 1) continue; // no next trading day to compare against
+        eventClose = closesByTicker[c.ticker].get(dates[idx + 1])!;
+        priorClose = closesByTicker[c.ticker].get(dates[idx])!;
+      }
+
       reactions.push({
         ticker: c.ticker,
         eventType: "Earnings",

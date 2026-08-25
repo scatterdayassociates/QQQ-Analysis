@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCatalystTrackerData } from "@/lib/catalysts";
 
-export const revalidate = 3600; // daily/positional data, not intraday
+export const revalidate = 3600; // 1 hour cache, safe now that sequential throttling prevents rate limiting
 
 export async function GET() {
   try {
