@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CatalystTrackerData, CatalystReaction } from "@/lib/catalysts";
 
 const EVENT_TYPES = ["FOMC", "CPI", "NFP", "Earnings"] as const;
@@ -51,7 +51,7 @@ export default function CatalystPanel() {
   const [error, setError] = useState<string | null>(null);
   const [tickerFilter, setTickerFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [previousComponents, setPreviousComponents] = useState<CatalystTrackerData["components"] | null>(null);
+  const previousComponentsRef = useRef<CatalystTrackerData["components"] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,9 +64,9 @@ export default function CatalystPanel() {
       const newData = json as CatalystTrackerData;
 
       // If rate-limited and we have previous data, merge daysUntilEarnings from cache
-      if (newData.rateLimitError && newData.isStaleCache && previousComponents) {
+      if (newData.rateLimitError && newData.isStaleCache && previousComponentsRef.current) {
         const mergedComponents = newData.components.map((component) => {
-          const previousComponent = previousComponents.find((p) => p.ticker === component.ticker);
+          const previousComponent = previousComponentsRef.current?.find((p) => p.ticker === component.ticker);
           return {
             ...component,
             // Preserve daysUntilEarnings from previous successful fetch if current is null
@@ -77,7 +77,7 @@ export default function CatalystPanel() {
       }
 
       // Store components for next refresh
-      setPreviousComponents(newData.components);
+      previousComponentsRef.current = newData.components;
       setData(newData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load catalyst tracker data");
@@ -85,7 +85,7 @@ export default function CatalystPanel() {
     } finally {
       setLoading(false);
     }
-  }, [previousComponents]);
+  }, []);
 
   useEffect(() => {
     load();
